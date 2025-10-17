@@ -311,7 +311,7 @@
     canvas.height = 230;
     canvas.style.position = 'absolute';
     canvas.style.left = '50%';
-    canvas.style.top = '100px';
+    canvas.style.top = '140px';
     canvas.style.width = '200px';
     canvas.style.height = '230px';
     canvas.style.marginLeft = '-100px';
@@ -552,12 +552,12 @@
     var originalConsoleLog = console.log;
     console.log = function() {
       originalConsoleLog.apply(console, arguments);
-      
+
       // Detect when pronunciation starts but we missed the gray circle
       var message = Array.prototype.slice.call(arguments).join(' ');
-      if (message.includes('Starting pronunciation process') || 
+      if (message.includes('Starting pronunciation process') ||
           message.includes('Loading animation displayed')) {
-        
+
         // Small delay to see if normal replacement worked
         setTimeout(function() {
           if (!brainState.overlay || !brainState.overlay.parentNode) {
@@ -565,6 +565,23 @@
             showMarketingBrainAnimation();
           }
         }, 200);
+      }
+
+      // Detect when pronunciation process completes and hide brain animation
+      if (message.includes('Loading animation hidden') ||
+          message.includes('hideLoadingAnimation') ||
+          message.includes('pronunciation process complete') ||
+          message.includes('cleanup') ||
+          message.includes('forceCleanupAllResources') ||
+          message.includes('Execution flag reset')) {
+
+        // Delay slightly to ensure the pronunciation script cleanup is complete
+        setTimeout(function() {
+          if (brainState.overlay && brainState.overlay.parentNode) {
+            console.log('SpeakSmart: Detected pronunciation completion, removing brain animation');
+            cleanup();
+          }
+        }, 100);
       }
     };
   }
