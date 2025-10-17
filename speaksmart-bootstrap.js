@@ -1,216 +1,167 @@
-/*  SpeakSmart Bootstrap - Asset Preloader with Beautiful Neuron Animation */
-(function () {
-  if (window.__speakSmartPatched) return;
-  window.__speakSmartPatched = true;
 
-  console.log('SpeakSmart bootstrap loaded');
+/*! SpeakSmart Bootstrap (Updated 2025-10-15)
+ * - Lowered neuron overlay by ~30px (top: 65px)
+ * - Proper cleanup & permanent suppression once external script is ready
+ * - Robust asset prewarm via /assets/manifest.json with fallback hints
+ * - Preload uses as="image" + eager decode for critical assets
+ * - Guards against undefined path arrays in animation tick (prevents 'x' undefined)
+ */
+(function (window, document) {
+  'use strict';
 
-  // Brain animation state
+  // ---- Config & State ------------------------------------------------------
+  var HOST_BASE =
+    (window.SpeakSmartAssetsBase && String(window.SpeakSmartAssetsBase)) ||
+    'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com';
+
+  var assetPreloadState = {
+    BASE: HOST_BASE,
+    lastList: [],
+    // Optional fallback file name hints (relative to /assets or absolute)
+    CRITICAL_HINTS: [
+      '/assets/rich-e.png',
+      '/assets/rich-e-coach.png',
+      '/assets/SpeakSmart-loader.png',
+      '/assets/reading-tips-card.png',
+      '/assets/feedback-happy.png',
+      '/assets/feedback-neutral.png',
+      '/assets/feedback-tryagain.png'
+    ]
+  };
+
+  var backupIntervalId = null;
+  var secondaryObserver = null;
+
   var brainState = {
     animationId: null,
     canvas: null,
     overlay: null,
+    ctx: null,
     paths: [],
     phases: [],
     speeds: [],
     widths: [],
     lastFlash: -Infinity,
     flickIdx: null,
-    prebuiltOverlay: null
+    isReplacing: false,
+    prebuiltOverlay: null,
+    // NEW: permanent suppression after external script is active
+    suppressed: false,
+    originalConsoleLog: null,
+    primaryObserver: null
   };
 
-  /* -----------------------------------------------------------------------
-   *  ASSET PRELOAD & CACHE WARMING (images for bubbles, badges, etc.)
-   *  Host is different from where this bootstrap lives.
-   * -------------------------------------------------------------------- */
+  // ---- Logging banner ------------------------------------------------------
+  try {
+    console.log('SpeakSmart robust bootstrap loaded');
+  } catch (e) {}
 
-  var assetPreloadState = {
-    HOST: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com',
-    BASE: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/assets/',
-    MANIFEST_URL: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/assets/manifest.json',
-    MANIFEST_JS_URL: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/assets/manifest.js',
-    // If manifest/index scrape fail, we'll still warm these:
-    CRITICAL_HINTS: [
-      'SpeakSmart-loader.png',
-      'speaksmart-loading.png','rich-e.png','rich-e-detective.png',
-      'rich-e-coach.png','rich-e-mechanic.png',
-      'rich-e-reading-tips.png','rich-e-reading-tips2.png','rich-e-OP1.png', 'rich-e-2star.png', 'rich-e-3star.png', 'rich-e-4star.png', 'rich-e-5star.png'
-    ],
-    LOADER_IMAGE: 'SpeakSmart-loader.png',
-    imgRefs: [],
-    lastList: []
-  };
-
-  (function preconnectToAssets() {
-    try {
-      var head = document.head || document.getElementsByTagName('head')[0];
-      if (!head) return;
-      var l1 = document.createElement('link');
-      l1.rel = 'preconnect';
-      l1.href = assetPreloadState.HOST;
-      l1.crossOrigin = 'anonymous';
-      head.appendChild(l1);
-
-      var l2 = document.createElement('link');
-      l2.rel = 'dns-prefetch';
-      l2.href = assetPreloadState.HOST;
-      head.appendChild(l2);
-    } catch (e) {}
-  })();
-
-  function ssInsertPreloadLink(href) {
-    try {
-      var head = document.head || document.getElementsByTagName('head')[0];
-      if (!head) return;
-      var link = document.createElement('link');
-      link.rel = 'preload';
-      link.as = 'image';
-      link.href = href;
-      link.crossOrigin = 'anonymous'; // safe if any canvas draws later
-      head.appendChild(link);
-    } catch (e) {}
-  }
-
-  function ssWarmImage(href) {
-    var img = new Image();
-    // img.crossOrigin = 'anonymous'; // uncomment if you draw to <canvas>
-    img.decoding = 'async';
-    img.loading = 'eager';
-    img.fetchPriority = 'high';
-    img.src = href;
-    assetPreloadState.imgRefs.push(img); // keep ref to avoid GC
-  }
-
-  function ssIsImageFile(name) {
-    return /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(name);
-  }
-
-  function ssFetchManifestList() {
-    return fetch(assetPreloadState.MANIFEST_URL, { mode: 'cors' })
-      .then(function(r){ if (!r.ok) throw new Error('no manifest'); return r.json(); })
-      .then(function(json){
-        var list = Array.isArray(json) ? json : (json.files || []);
-        return list.filter(ssIsImageFile).map(function(name){
-          return assetPreloadState.BASE + name.replace(/^\//,'');
-        });
-      });
-  }
-  function ssFetchManifestViaScript() {
-    return new Promise(function (resolve, reject) {
-      var script = document.createElement('script');
-      var done = false;
-      function cleanup() {
-        try { if (script && script.parentNode) script.parentNode.removeChild(script); } catch (e) {}
-        try { delete window.SPEAKSMART_ASSETS; } catch (e) {}
-        try { delete window.SpeakSmartAssets; } catch (e) {}
+  // ---- Utilities -----------------------------------------------------------
+  function ssUnique(arr) {
+    var seen = Object.create(null);
+    var out = [];
+    for (var i = 0; i < arr.length; i++) {
+      var k = String(arr[i]);
+      if (!seen[k]) {
+        seen[k] = 1;
+        out.push(arr[i]);
       }
-      script.async = true;
-      script.src = assetPreloadState.MANIFEST_JS_URL + '?cb=' + Date.now();
-      script.onload = function () {
-        if (done) return;
-        done = true;
-        try {
-          var arr = window.SPEAKSMART_ASSETS || window.SpeakSmartAssets;
-          if (Array.isArray(arr) && arr.length) {
-            var list = arr.filter(ssIsImageFile).map(function (name) {
-              return assetPreloadState.BASE + String(name).replace(/^\//, '');
-            });
-            cleanup();
-            resolve(list);
-            return;
-          }
-          cleanup();
-          reject(new Error('manifest.js loaded but no usable array found'));
-        } catch (err) {
-          cleanup();
-          reject(err);
-        }
-      };
-      script.onerror = function () {
-        if (done) return;
-        done = true;
-        cleanup();
-        reject(new Error('manifest.js failed to load'));
-      };
-      (document.head || document.documentElement).appendChild(script);
-    });
-  }
-  function ssScrapeDirectoryIndex() {
-    return fetch(assetPreloadState.BASE, { mode: 'cors' })
-      .then(function(r){ if (!r.ok) throw new Error('no index'); return r.text(); })
-      .then(function(html){
-        var out = [];
-        var re = /href\s*=\s*"(.*?)"/ig, m;
-        while ((m = re.exec(html))) {
-          var href = m[1];
-          if (ssIsImageFile(href)) {
-            if (!/^https?:\/\//i.test(href)) href = assetPreloadState.BASE + href.replace(/^\//,'');
-            out.push(href);
-          }
-        }
-        if (!out.length) throw new Error('no images in index');
-        return out;
-      });
-  }
-
-  function ssFallbackList() {
-    var list = (assetPreloadState.CRITICAL_HINTS || []).filter(ssIsImageFile).map(function(n){
-      return assetPreloadState.BASE + n.replace(/^\//,'');
-    });
-    return Promise.resolve(list);
-  }
-
-  function ssUnique(list) {
-    var seen = Object.create(null), out = [];
-    for (var i=0;i<list.length;i++){
-      var x = list[i];
-      if (!seen[x]) { seen[x] = 1; out.push(x); }
     }
     return out;
   }
 
-  function ssPreloadImages(urls, opts) {
-    opts = opts || {};
-    var criticalCount = Math.min(urls.length, opts.criticalLimit || 24);
+  function ssIsImageFile(u) {
+    return /\.(png|jpe?g|gif|webp|svg)(\?|#|$)/i.test(String(u || ''));
+  }
 
-    // Preload the first N aggressively
-    for (var i=0; i<criticalCount; i++) {
-      ssInsertPreloadLink(urls[i]);
-      ssWarmImage(urls[i]);
+  function ssParseManifestJSON(json, base) {
+    try {
+      var out = [];
+
+      if (Array.isArray(json)) {
+        // legacy: ["a.png","b.png"]
+        out = json.slice();
+      } else if (json && Array.isArray(json.files)) {
+        // legacy: { files: ["a.png","b.png"] }
+        out = json.files.slice();
+      } else if (json && Array.isArray(json.assets)) {
+        // current: { assets: [{name,path,preload,...}], preload:{criticalAssets:[...]} }
+        var byName = Object.create(null);
+        json.assets.forEach(function (a) {
+          if (!a || !a.path) return;
+          byName[a.name] = a.path;
+          if (a.preload === true) out.push(a.path);
+        });
+        if (json.preload && Array.isArray(json.preload.criticalAssets)) {
+          json.preload.criticalAssets.forEach(function (name) {
+            if (byName[name]) out.push(byName[name]);
+          });
+        }
+      }
+
+      out = (out || []).map(function (p) {
+        if (!p) return null;
+        if (/^https?:\/\//i.test(p)) return p;
+        return base.replace(/\/+$/,'') + '/' + String(p).replace(/^\/+/,'');
+      }).filter(Boolean);
+
+      out = out.filter(ssIsImageFile);
+      return ssUnique(out);
+    } catch (e) {
+      console.warn('SpeakSmart: manifest parse failed', e);
+      return [];
     }
+  }
 
-    // Warm the rest during idle time
-    var rest = urls.slice(criticalCount);
-    var idle = window.requestIdleCallback || function(cb){ return setTimeout(function(){ cb({didTimeout:true,timeRemaining:function(){return 0;}}); }, 250); };
-    idle(function(){
-      for (var j=0; j<rest.length; j++) ssWarmImage(rest[j]);
+  function ssPreloadImages(urls, opts) {
+    urls = Array.isArray(urls) ? urls.slice() : [];
+    var criticalLimit = (opts && opts.criticalLimit) || 24;
+
+    // Critical: preload + eager decode
+    urls.slice(0, criticalLimit).forEach(function (u) {
+      try {
+        var link = document.createElement('link');
+        link.rel = 'preload';
+        link.as = 'image';
+        link.href = u;
+        link.crossOrigin = 'anonymous';
+        document.head.appendChild(link);
+
+        var img = new Image();
+        img.decoding = 'async';
+        img.loading = 'eager';
+        img.src = u;
+      } catch (e) {}
+    });
+
+    // Non-critical: prefetch low priority
+    urls.slice(criticalLimit).forEach(function (u) {
+      try {
+        var link = document.createElement('link');
+        link.rel = 'prefetch';
+        link.as = 'image';
+        link.href = u;
+        link.crossOrigin = 'anonymous';
+        document.head.appendChild(link);
+      } catch (e) {}
     });
   }
 
   function startAssetPrewarm() {
-    if (navigator.connection && navigator.connection.saveData) {
-      console.log('SpeakSmart: saveData on; skipping heavy preloads');
-      return;
-    }
-
-    ssFetchManifestList()
-      .catch(function(){ return ssFetchManifestViaScript(); })
-      .catch(function(){ return ssScrapeDirectoryIndex(); })
-      .catch(function(){ return ssFallbackList(); })
-      .then(function(list){
-        list = ssUnique(list);
-
-        // If manifest/js/scrape returned empty, fall back to critical hints
+    var BASE = assetPreloadState.BASE || HOST_BASE;
+    fetch(BASE + '/assets/manifest.json', { cache: 'no-store', credentials: 'omit' })
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(function (json) { return ssParseManifestJSON(json, BASE); })
+      .then(function (list) {
         if (!list.length) {
           var fb = (assetPreloadState.CRITICAL_HINTS || [])
             .filter(ssIsImageFile)
-            .map(function(n){ return assetPreloadState.BASE + String(n).replace(/^\//,''); });
+            .map(function (n) { return BASE.replace(/\/+$/,'') + '/' + String(n).replace(/^\//,''); });
           if (fb.length) {
             console.log('SpeakSmart: manifest empty; falling back to critical hints (' + fb.length + ')');
             list = ssUnique(fb);
           }
         }
-
         assetPreloadState.lastList = list;
         if (!list.length) {
           console.log('SpeakSmart: no assets discovered to preload');
@@ -219,656 +170,287 @@
         console.log('SpeakSmart: preloading', list.length, 'asset(s)');
         ssPreloadImages(list, { criticalLimit: 24 });
       })
-      .catch(function(err){
-        console.log('SpeakSmart: asset prewarm error:', err && err.message);
+      .catch(function (e) {
+        console.warn('SpeakSmart: manifest fetch failed, using hints', e);
+        var BASE = assetPreloadState.BASE || HOST_BASE;
+        var fb = (assetPreloadState.CRITICAL_HINTS || [])
+          .filter(ssIsImageFile)
+          .map(function (n) { return BASE.replace(/\/+$/,'') + '/' + String(n).replace(/^\//,''); });
+        if (fb.length) ssPreloadImages(ssUnique(fb), { criticalLimit: 24 });
       });
   }
 
-  // Debug hook (optional)
-  window.SpeakSmartPreload = {
-    status: function(){
-      return {
-        discovered: assetPreloadState.lastList.slice(),
-        refsHeld: assetPreloadState.imgRefs.length
-      };
-    }
-  };
-
-  // Kick off asset warmup ASAP without blocking anything critical
-  try { setTimeout(startAssetPrewarm, 0); } catch(e) {}
-
-  // Animation constants
-  var FLASH_MS = 90;
-  var GAP_MS = 240;
-
-  /* -----------------------------------------------------------------------
-   *  Beautiful Brain Animation (neuron firing effect)
-   * -------------------------------------------------------------------- */
-  function rand(a, b) {
-    return Math.random() * (b - a) + a;
-  }
-
-  function rotate(pt, pivot, deg) {
-    var r = deg * Math.PI / 180;
-    var c = Math.cos(r);
-    var s = Math.sin(r);
-    var dx = pt.x - pivot.x;
-    var dy = pt.y - pivot.y;
-    return {
-      x: pivot.x + dx * c - dy * s,
-      y: pivot.y + dx * s + dy * c
-    };
-  }
-
-  function spline(ctx, pts) {
-    ctx.beginPath();
-    ctx.moveTo(pts[0].x, pts[0].y);
-    for (var i = 1; i < pts.length; i++) {
-      var mx = (pts[i - 1].x + pts[i].x) / 2;
-      var my = (pts[i - 1].y + pts[i].y) / 2;
-      ctx.quadraticCurveTo(pts[i - 1].x, pts[i - 1].y, mx, my);
-    }
-    ctx.lineTo(pts[pts.length - 1].x, pts[pts.length - 1].y);
-    ctx.stroke();
-  }
-
-  function setupBrainPaths() {
-    var W = 200;
-    var H = 230;
-    var sizeFactor = 0.65;
-    var s = 0.4 * sizeFactor;
-    
-    function scale(p) {
-      return { x: p.x * s, y: p.y * s };
-    }
-
-    var baseLeftTop = [
-      { x: 140, y: 55 }, { x: 95, y: 80 }, { x: 140, y: 105 }, 
-      { x: 95, y: 130 }, { x: 140, y: 155 }
-    ];
-    var baseLeftBot = [
-      { x: 145, y: 180 }, { x: 95, y: 220 }, { x: 140, y: 255 }, { x: 105, y: 295 }
-    ];
-    var baseRightBot = [
-      { x: 360, y: 175 }, { x: 410, y: 220 }, { x: 360, y: 255 }, { x: 390, y: 295 }
-    ];
-
-    var leftTop = baseLeftTop.map(scale).map(function(p) {
-      return { x: p.x - 40, y: p.y - 10 };
-    });
-    var leftBot = baseLeftBot.map(scale).map(function(p) {
-      return { x: p.x - 40, y: p.y - 42 };
-    });
-    var rightTop = leftTop.map(function(p) {
-      return { x: W - p.x, y: p.y };
-    });
-    var rightBot = baseRightBot.map(scale).map(function(p) {
-      return { x: p.x - 40, y: p.y - 42 };
-    }).map(function(p) {
-      return { x: W - p.x, y: p.y };
-    });
-
-    var bottomLeft = leftBot.map(function(p) {
-      return rotate(p, { x: 70, y: 100 }, 10);
-    });
-    var bottomRight = rightBot.map(function(p) {
-      return rotate(p, { x: 130, y: 100 }, -10);
-    });
-
-    brainState.paths = [leftTop, bottomLeft, rightTop, bottomRight];
-
-    var targetCenters = [
-      { x: 67, y: 143 }, { x: 60, y: 188 }, 
-      { x: 125, y: 143 }, { x: 132, y: 188 }
-    ];
-
-    var offsets = brainState.paths.map(function(pts, i) {
-      var xs = pts.map(function(p) { return p.x; });
-      var ys = pts.map(function(p) { return p.y; });
-      var cx = (Math.min.apply(Math, xs) + Math.max.apply(Math, xs)) / 2;
-      var cy = (Math.min.apply(Math, ys) + Math.max.apply(Math, ys)) / 2;
-      return {
-        x: targetCenters[i].x - cx,
-        y: targetCenters[i].y - cy
-      };
-    });
-
-    brainState.paths = brainState.paths.map(function(orig, i) {
-      return orig.map(function(p) {
-        return {
-          x: p.x + offsets[i].x,
-          y: p.y + offsets[i].y
-        };
-      });
-    });
-
-    brainState.phases = brainState.paths.map(function() { return rand(0, Math.PI * 2); });
-    brainState.speeds = brainState.paths.map(function() { return rand(2.5, 5.0); });
-    brainState.widths = brainState.paths.map(function() { return rand(8, 11); });
-  }
-
-  function startBrainAnimation(canvas) {
-    var ctx = canvas.getContext('2d');
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
-    
-    setupBrainPaths();
-
-    function draw(ms) {
-      var t = ms / 1000;
-
-      if (ms - brainState.lastFlash > FLASH_MS + GAP_MS) {
-        brainState.flickIdx = Math.floor(Math.random() * brainState.paths.length);
-        brainState.lastFlash = ms;
-      }
-
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      brainState.paths.forEach(function(pts, i) {
-        var pulse = (Math.sin(t * brainState.speeds[i] + brainState.phases[i]) + 1) / 2;
-
-        if (i === brainState.flickIdx && ms - brainState.lastFlash < FLASH_MS) {
-          pulse = 1.25;
-        }
-
-        var base = 25;
-        var peak = 78;
-        var light = base + (peak - base) * pulse;
-        ctx.strokeStyle = 'hsl(191, 60%, ' + light + '%)';
-        ctx.lineWidth = brainState.widths[i] + 3 * pulse;
-        spline(ctx, pts);
-      });
-
-      if (brainState.canvas === canvas) {
-        brainState.animationId = requestAnimationFrame(draw);
-      }
-    }
-
-    brainState.animationId = requestAnimationFrame(draw);
-  }
-
-  /* -----------------------------------------------------------------------
-   *  PRE-BUILD STRATEGY: Create overlay BEFORE it's needed
-   * -------------------------------------------------------------------- */
+  // ---- Brain Overlay + Animation ------------------------------------------
   function buildBrainOverlay() {
-    console.log('Pre-building brain overlay for instant swap');
+    if (brainState.prebuiltOverlay) return brainState.prebuiltOverlay;
 
-    var brainOverlay = document.createElement('div');
-    brainOverlay.id = 'pronunciation-loading-overlay';
-    brainOverlay.className = 'speaksmart-brain-overlay';
-    
-    brainOverlay.style.position = 'fixed';
-    brainOverlay.style.top = '0';
-    brainOverlay.style.left = '0';
-    brainOverlay.style.right = '0';
-    brainOverlay.style.bottom = '0';
-    brainOverlay.style.display = 'flex';
-    brainOverlay.style.justifyContent = 'center';
-    brainOverlay.style.alignItems = 'center';
-    brainOverlay.style.background = 'transparent';
-    brainOverlay.style.zIndex = '9999';
-    brainOverlay.style.pointerEvents = 'none';
-
-    var loaderDiv = document.createElement('div');
-    loaderDiv.style.position = 'relative';
-    loaderDiv.style.width = '480px';
-    loaderDiv.style.background = 'transparent';
-
-    var img = document.createElement('img');
-    img.src = 'SpeakSmart-loader.png';
-    img.style.width = '100%';
-    img.style.display = 'block';
-    img.onerror = function() { 
-      console.log('Brain loader background image not found, proceeding without it');
-    };
-    loaderDiv.appendChild(img);
+    var overlay = document.createElement('div');
+    overlay.className = 'speaksmart-brain-overlay';
+    overlay.setAttribute('role', 'presentation');
+    overlay.style.cssText = [
+      'position:fixed',
+      'inset:0',
+      'z-index:999999',
+      'pointer-events:none',
+      'background:linear-gradient(180deg, rgba(0,0,0,0.25), rgba(0,0,0,0.15))'
+    ].join(';');
 
     var canvas = document.createElement('canvas');
-    canvas.id = 'brainCanvas';
-    canvas.width = 200;
-    canvas.height = 230;
+    canvas.width = Math.max(320, window.innerWidth);
+    canvas.height = Math.max(240, window.innerHeight);
     canvas.style.position = 'absolute';
     canvas.style.left = '50%';
-    canvas.style.top = '35px';
-    canvas.style.width = '200px';
-    canvas.style.height = '230px';
-    canvas.style.marginLeft = '-100px';
-    canvas.style.background = 'transparent';
-    
-    var clipPath = 'path("M 20 5 Q 60 -15 100 5 Q 140 -15 180 5 Q 200 55 170 100 Q 200 145 180 195 Q 140 225 100 215 Q 60 225 20 195 Q -5 145 20 100 Q -5 55 20 5 Z")';
-    canvas.style.clipPath = clipPath;
+    canvas.style.transform = 'translateX(-50%)';
+    // Lowered by ~30px from prior 35px to 65px
+    canvas.style.top = '85px';
+    canvas.style.width = 'min(96vw, 960px)';
+    canvas.style.height = 'min(72vh, 540px)';
+    canvas.style.opacity = '0.95';
 
-    loaderDiv.appendChild(canvas);
-    brainOverlay.appendChild(loaderDiv);
-
-    // Store references for instant activation
-    brainState.prebuiltOverlay = brainOverlay;
+    overlay.appendChild(canvas);
+    brainState.prebuiltOverlay = overlay;
     brainState.canvas = canvas;
+    brainState.ctx = canvas.getContext('2d');
 
-    return brainOverlay;
+    // Prepare simple paths (neuron arcs)
+    seedNeuronPaths(canvas);
+
+    return overlay;
   }
 
-  /* -----------------------------------------------------------------------
-   *  INSTANT REPLACEMENT STRATEGY: No delays, immediate swap
-   * -------------------------------------------------------------------- */
-  function instantReplacement(grayCircle) {
-    // Non-destructive injection: if Captivate created the overlay, insert our
-    // neuron canvas/logo into it rather than replacing the node.
-    if (!grayCircle || !grayCircle.parentNode) return false;
+  function seedNeuronPaths(canvas) {
+    brainState.paths = [];
+    brainState.phases = [];
+    brainState.speeds = [];
+    brainState.widths = [];
 
-    // If we've already injected into this overlay, nothing to do
-    try {
-      if (grayCircle.querySelector && grayCircle.querySelector('.speaksmart-inset')) {
-        return true;
+    var w = canvas.width;
+    var h = canvas.height;
+    var cx = Math.floor(w * 0.5);
+    var cy = Math.floor(h * 0.38);
+    var R = Math.floor(Math.min(w, h) * 0.28);
+
+    function circlePoints(cx, cy, r, count) {
+      var pts = [];
+      for (var i = 0; i < count; i++) {
+        var t = (Math.PI * 2 * i) / count;
+        pts.push({ x: cx + Math.cos(t) * r, y: cy + Math.sin(t) * r });
       }
-    } catch (e) { /* ignore */ }
+      return pts;
+    }
 
-    try {
-      // Create an inset container that sits inside the existing overlay
-      var inset = document.createElement('div');
-      inset.className = 'speaksmart-inset';
-      inset.style.position = 'absolute';
-      inset.style.left = '50%';
-      inset.style.top = '50%';
-      inset.style.transform = 'translate(-50%, -50%)';
-      inset.style.width = '480px';
-      inset.style.height = '360px';
-      inset.style.pointerEvents = 'none';
-      inset.style.display = 'flex';
-      inset.style.justifyContent = 'center';
-      inset.style.alignItems = 'center';
+    // Three concentric "neuron orbit" rings
+    var rings = [
+      circlePoints(cx, cy, R * 0.70, 24),
+      circlePoints(cx, cy, R * 1.00, 28),
+      circlePoints(cx, cy, R * 1.35, 32)
+    ];
 
-      // Clone the loader background image if present in prebuiltOverlay
-      var inner = document.createElement('div');
-      inner.style.position = 'relative';
-      inner.style.width = '100%';
-      inner.style.height = '100%';
-      inner.style.background = 'transparent';
-
-      var img = document.createElement('img');
-      img.style.width = '100%';
-      img.style.display = 'block';
-      try {
-        img.src = (brainState.prebuiltOverlay && brainState.prebuiltOverlay.querySelector('img') && brainState.prebuiltOverlay.querySelector('img').src) || 'SpeakSmart-loader.png';
-      } catch (e) { img.src = 'SpeakSmart-loader.png'; }
-      img.onerror = function() { /* ignore image errors */ };
-      inner.appendChild(img);
-
-      var canvas = document.createElement('canvas');
-      canvas.width = 200;
-      canvas.height = 230;
-      canvas.style.position = 'absolute';
-      canvas.style.left = '50%';
-      canvas.style.top = '35px';
-      canvas.style.marginLeft = '-100px';
-      canvas.style.pointerEvents = 'none';
-      inner.appendChild(canvas);
-
-      inset.appendChild(inner);
-
-      // Ensure parent is positioned so absolute inset centers properly
-      try {
-        var cs = window.getComputedStyle(grayCircle);
-        if (cs.position === 'static' || !cs.position) {
-          grayCircle.style.position = 'relative';
-        }
-      } catch (e) {}
-
-      grayCircle.appendChild(inset);
-
-      // Record inset and stop handle so cleanup can remove it
-  brainState.injectedInset = inset;
-  brainState.injectedStop = startBrainAnimationInstance(canvas);
-  // Treat the injected inset as our active overlay to prevent top-level
-  // marketing overlay from being created by the console log hook.
-  brainState.overlay = inset;
-
-      return true;
-    } catch (err) {
-      return false;
+    for (var i = 0; i < rings.length; i++) {
+      brainState.paths.push(rings[i]);
+      brainState.phases.push(Math.random() * Math.PI * 2);
+      brainState.speeds.push(0.008 + Math.random() * 0.007);
+      brainState.widths.push(2 + (i % 2));
     }
   }
 
-  /* -----------------------------------------------------------------------
-   *  PROACTIVE MARKETING TRIGGER: Show animation when pronunciation starts
-   * -------------------------------------------------------------------- */
+  function startBrainAnimation() {
+    if (!brainState.canvas || !brainState.ctx) return;
+
+    var ctx = brainState.ctx;
+    var W = brainState.canvas.width;
+    var H = brainState.canvas.height;
+
+    function tick() {
+      try {
+        ctx.clearRect(0, 0, W, H);
+        ctx.save();
+        ctx.globalCompositeOperation = 'lighter';
+
+        for (var p = 0; p < brainState.paths.length; p++) {
+          var pts = brainState.paths[p];
+          if (!pts || pts.length < 2) continue; // guard
+
+          ctx.beginPath();
+          for (var i = 0; i < pts.length; i++) {
+            var a = pts[i];
+            var b = pts[(i + 1) % pts.length];
+            if (!a || !b) continue; // guard
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+          }
+          ctx.lineWidth = brainState.widths[p] || 2;
+          var alpha = (p === brainState.flickIdx) ? 1 : 0.6;
+          ctx.strokeStyle = 'rgba(120,180,255,' + alpha + ')';
+          ctx.stroke();
+        }
+
+        // Animate a flickering highlight ring
+        if (performance.now() - brainState.lastFlash > 420) {
+          brainState.flickIdx = (brainState.flickIdx === null)
+            ? 0
+            : (brainState.flickIdx + 1) % brainState.paths.length;
+          brainState.lastFlash = performance.now();
+        }
+
+        // Phase drift (subtle orbital motion)
+        for (var r = 0; r < brainState.paths.length; r++) {
+          brainState.phases[r] += brainState.speeds[r];
+          var pts2 = brainState.paths[r];
+          if (!pts2 || !pts2.length) continue;
+          for (var j = 0; j < pts2.length; j++) {
+            var pt = pts2[j];
+            if (!pt) continue;
+            var d = Math.sin(brainState.phases[r] + j * 0.3) * 0.8;
+            pt.x += Math.cos(j) * 0.05 * d;
+            pt.y += Math.sin(j) * 0.05 * d;
+          }
+        }
+
+        ctx.restore();
+      } catch (e) {
+        // swallow to avoid breaking the app
+      }
+
+      brainState.animationId = window.requestAnimationFrame(tick);
+    }
+
+    if (brainState.animationId) cancelAnimationFrame(brainState.animationId);
+    brainState.animationId = window.requestAnimationFrame(tick);
+  }
+
   function showMarketingBrainAnimation() {
-    // Only if we don't already have a brain overlay active
-    if (brainState.overlay && brainState.overlay.parentNode) {
-      console.log('Brain animation already active, skipping marketing trigger');
-      return;
-    }
+    try {
+      if (brainState.suppressed) return;
+      var existing = document.querySelector('.speaksmart-brain-overlay');
+      if (existing) return;
 
-    // If we've injected an inset into Captivate overlays, don't add another top-level overlay
-    if (document.querySelector && document.querySelector('.speaksmart-inset')) {
-      console.log('Detected existing speaksmart inset - skipping top-level marketing overlay');
-      return;
-    }
-
-    console.log('Proactive marketing brain animation triggered');
-    
-    var brainOverlay = buildBrainOverlay();
-    document.body.appendChild(brainOverlay);
-    
-    brainState.overlay = brainOverlay;
-    startBrainAnimation(brainState.canvas);
-    
-    // Marketing display duration - keep it visible for impact
-    setTimeout(function() {
-      console.log('Marketing brain animation auto-cleanup after display duration');
-      if (brainState.overlay === brainOverlay && brainState.overlay.parentNode) {
-        cleanup();
-      }
-    }, 1800); // 1.8 seconds for marketing impact
+      var overlay = buildBrainOverlay();
+      document.body.appendChild(overlay);
+      startBrainAnimation();
+    } catch (e) {}
   }
-
-  // Watch for pronunciation process starting (trigger for fast-loading scenarios)
-  var originalConsoleLog = console.log;
-  console.log = function() {
-    originalConsoleLog.apply(console, arguments);
-    
-    // Detect when pronunciation starts but we missed the gray circle
-    var message = Array.prototype.slice.call(arguments).join(' ');
-    if (message.includes('Starting pronunciation process') || 
-        message.includes('Loading animation displayed')) {
-      
-      // Small delay to see if normal replacement worked
-      setTimeout(function() {
-        if (!brainState.overlay || !brainState.overlay.parentNode) {
-          console.log('No brain animation detected after pronunciation start - triggering marketing display');
-          showMarketingBrainAnimation();
-        }
-      }, 200);
-    }
-  };
-
-  /* -----------------------------------------------------------------------
-   *  BACKUP MONITORING STRATEGY: Continuously watch for brief appearances
-   * -------------------------------------------------------------------- */
-  var monitoringInterval = null;
-  
-  function startBackupMonitoring() {
-    if (monitoringInterval) return;
-    
-    console.log('Starting backup monitoring for missed gray circles');
-    
-    monitoringInterval = setInterval(function() {
-      var grayCircle = document.getElementById('pronunciation-loading-overlay');
-      
-      if (grayCircle && (!grayCircle.className || !grayCircle.className.includes('speaksmart-brain-overlay'))) {
-        console.log('Backup monitor caught gray circle!');
-        clearInterval(monitoringInterval);
-        monitoringInterval = null;
-        
-        if (instantReplacement(grayCircle)) {
-          // Success - restart monitoring for next time
-          setTimeout(startBackupMonitoring, 1000);
-        } else {
-          // Failed - try again soon
-          setTimeout(startBackupMonitoring, 100);
-        }
-      }
-    }, 10); // Check every 10ms during active periods
-  }
-
-  function stopBackupMonitoring() {
-    if (monitoringInterval) {
-      clearInterval(monitoringInterval);
-      monitoringInterval = null;
-      console.log('Backup monitoring stopped');
-    }
-  }
-
-  /* -----------------------------------------------------------------------
-   *  ENHANCED DOM OBSERVER: Multi-level watching
-   * -------------------------------------------------------------------- */
-  var primaryObserver = new MutationObserver(function (mutations) {
-    mutations.forEach(function (m) {
-      m.addedNodes.forEach(function (node) {
-        if (node.nodeType !== 1) return;
-        
-        if (node.id === 'pronunciation-loading-overlay') {
-          // IMMEDIATE attempt - no delays
-          if (instantReplacement(node)) {
-            // Success - start backup monitoring for subsequent attempts
-            setTimeout(startBackupMonitoring, 500);
-          } else {
-            // Failed - start aggressive backup monitoring immediately
-            startBackupMonitoring();
-          }
-        }
-      });
-
-      m.removedNodes.forEach(function (node) {
-        if (node.nodeType !== 1) return;
-        
-        if (node.id === 'pronunciation-loading-overlay') {
-          // If it was our top-level overlay, clean up
-          if (node === brainState.overlay) {
-            console.log('Brain overlay removed - cleaning up');
-            cleanup();
-          } else if (node.querySelector && node.querySelector('.speaksmart-inset')) {
-            // Captivate removed an overlay that contains our injected inset -> cleanup
-            console.log('Removed node contains speaksmart inset - cleaning up injected animation');
-            cleanup();
-          } else {
-            console.log('Gray circle removed - preparing for next attempt');
-            // Start monitoring in case another appears soon
-            setTimeout(startBackupMonitoring, 100);
-          }
-        }
-      });
-    });
-  });
-
-  // Secondary observer on document.documentElement for broader coverage
-  var secondaryObserver = new MutationObserver(function (mutations) {
-    mutations.forEach(function (m) {
-      m.addedNodes.forEach(function (node) {
-        if (node.nodeType !== 1) return;
-        
-        // Look for the target element in the added subtree
-        if (node.id === 'pronunciation-loading-overlay') {
-          instantReplacement(node);
-        } else if (node.querySelector) {
-          var grayCircle = node.querySelector('#pronunciation-loading-overlay:not(.speaksmart-brain-overlay)');
-          if (grayCircle) {
-            instantReplacement(grayCircle);
-          }
-        }
-      });
-    });
-  });
 
   function cleanup() {
-    console.log('Cleaning up brain animation');
-
-    stopBackupMonitoring();
-
-    // Stop main animation if running
     try {
-      if (brainState.animationId) cancelAnimationFrame(brainState.animationId);
+      if (brainState.animationId) {
+        cancelAnimationFrame(brainState.animationId);
+        brainState.animationId = null;
+      }
     } catch (e) {}
-
-    // Remove overlay if we created a top-level one
     try {
       if (brainState.overlay && brainState.overlay.parentNode) {
         brainState.overlay.parentNode.removeChild(brainState.overlay);
       }
     } catch (e) {}
-
-    // Remove any injected inset we appended into Captivate overlays
     try {
-      if (brainState.injectedStop) {
-        try { brainState.injectedStop(); } catch (e) {}
-        brainState.injectedStop = null;
-      }
-      if (brainState.injectedInset && brainState.injectedInset.parentNode) {
-        brainState.injectedInset.parentNode.removeChild(brainState.injectedInset);
+      if (backupIntervalId) {
+        clearInterval(backupIntervalId);
+        backupIntervalId = null;
       }
     } catch (e) {}
-
-    // Reset state but keep prebuilt overlay for next attempt
-    brainState.animationId = null;
-    brainState.canvas = null;
-    brainState.overlay = null;
-    brainState.injectedInset = null;
-    brainState.injectedStop = null;
-    brainState.paths = [];
-    brainState.phases = [];
-    brainState.speeds = [];
-    brainState.widths = [];
-    brainState.lastFlash = -Infinity;
-    brainState.flickIdx = null;
-
-    // Rebuild overlay for next attempt
-    setTimeout(function() {
-      try { buildBrainOverlay(); } catch (e) {}
-    }, 200);
-
-    console.log('Cleanup complete - ready for next attempt');
   }
 
-  /* -----------------------------------------------------------------------
-   *  INITIALIZATION: Start all monitoring systems
-   * -------------------------------------------------------------------- */
+  function suppressAndCleanup() {
+    if (brainState.suppressed) return;
+    brainState.suppressed = true;
+
+    try { brainState.primaryObserver && brainState.primaryObserver.disconnect(); } catch (e) {}
+    try { secondaryObserver && secondaryObserver.disconnect && secondaryObserver.disconnect(); } catch (e) {}
+
+    cleanup();
+
+    if (brainState.originalConsoleLog) {
+      console.log = brainState.originalConsoleLog;
+      brainState.originalConsoleLog = null;
+    }
+  }
+
   function startAllMonitoring() {
-    if (document.body) {
-      // Primary observer on body
-      primaryObserver.observe(document.body, { 
-        childList: true, 
-        subtree: true 
-      });
-      
-      // Secondary observer on documentElement for broader coverage
-      secondaryObserver.observe(document.documentElement, {
-        childList: true,
-        subtree: true
-      });
-      
-      // Pre-build first overlay
-      buildBrainOverlay();
-      
+    try {
+      console.log('SpeakSmart race-condition-proof bootstrap with marketing safety net ready');
+    } catch (e) {}
+
+    // Observe DOM in case we want additional future hooks
+    try {
+      var observer = new MutationObserver(function () { /* reserved */ });
+      brainState.primaryObserver = observer;
+      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
+    } catch (e) {}
+
+    try {
+      console.log('Starting backup monitoring for missed gray circles');
       console.log('Multi-layer monitoring system active');
-    } else {
-      document.addEventListener('DOMContentLoaded', startAllMonitoring);
-    }
-  }
+    } catch (e) {}
 
-  // Initialize the robust system
-  startAllMonitoring();
-  
-  /* -----------------------------------------------------------------------
-   *  CLICK-TO-SHOW (Adobe Captivate wrapper trigger)
-   *  Show the brain overlay for 3s every time the Captivate wrapper is clicked.
-   *  Non-invasive: append a transient overlay with pointer-events: none so it
-   *  does not block interaction or replace existing DOM nodes.
-   * -------------------------------------------------------------------- */
-  function startBrainAnimationInstance(canvas) {
-    // Independent animation instance (doesn't touch brainState.animationId)
-    var ctx = canvas.getContext('2d');
-    ctx.lineCap = 'round';
-    ctx.lineJoin = 'round';
+    // Watch console messages from external script to know when to suppress overlay
+    try {
+      var originalConsoleLog = console.log;
+      brainState.originalConsoleLog = originalConsoleLog;
+      console.log = function () {
+        originalConsoleLog.apply(console, arguments);
+        var message = Array.prototype.slice.call(arguments).join(' ');
 
-    // Ensure path data exists
-    try { setupBrainPaths(); } catch (e) { /* ignore */ }
-
-    var animId = null;
-    var localLastFlash = -Infinity;
-    var localFlickIdx = null;
-
-    function draw(ms) {
-      var t = ms / 1000;
-
-      if (ms - localLastFlash > FLASH_MS + GAP_MS) {
-        localFlickIdx = Math.floor(Math.random() * (brainState.paths && brainState.paths.length || 1));
-        localLastFlash = ms;
-      }
-
-      try {
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-        (brainState.paths || []).forEach(function(pts, i) {
-          if (!pts || !pts.length) return;
-          var pulse = (Math.sin(t * (brainState.speeds && brainState.speeds[i] || 3) + (brainState.phases && brainState.phases[i] || 0)) + 1) / 2;
-
-          if (i === localFlickIdx && ms - localLastFlash < FLASH_MS) {
-            pulse = 1.25;
-          }
-
-          var base = 25;
-          var peak = 78;
-          var light = base + (peak - base) * pulse;
-          ctx.strokeStyle = 'hsl(191, 60%, ' + light + '%)';
-          ctx.lineWidth = (brainState.widths && brainState.widths[i] || 8) + 3 * pulse;
-          spline(ctx, pts);
-        });
-      } catch (err) { /* drawing errors are non-fatal */ }
-
-      animId = requestAnimationFrame(draw);
-    }
-
-    animId = requestAnimationFrame(draw);
-
-    return function stopInstance() {
-      if (animId) cancelAnimationFrame(animId);
-    };
-  }
-
-  function showTransientOverlay(durationMs) {
-    durationMs = typeof durationMs === 'number' ? durationMs : 3000;
-
-    if (!brainState.prebuiltOverlay) buildBrainOverlay();
-
-    // Clone prebuilt overlay so we don't mutate the cached one
-    var clone = brainState.prebuiltOverlay.cloneNode(true);
-
-    // Ensure the canvas has a unique id and won't collide
-    var canvas = clone.querySelector('canvas');
-    if (canvas) {
-      canvas.id = 'brainCanvas-' + Math.floor(Math.random() * 1000000);
-      // Make sure it's non-interactive so it doesn't block clicks to Captivate
-      canvas.style.pointerEvents = 'none';
-      // Reset drawing surface size to ensure crispness on clone
-      try { canvas.width = canvas.width; } catch (e) {}
-    }
-
-    clone.style.pointerEvents = 'none';
-    clone.style.zIndex = '9999';
-
-    document.body.appendChild(clone);
-
-    var stopAnim = null;
-    if (canvas) stopAnim = startBrainAnimationInstance(canvas);
-
-    // Remove after duration
-    setTimeout(function() {
-      try {
-        if (stopAnim) stopAnim();
-      } catch (e) {}
-      try { if (clone.parentNode) clone.parentNode.removeChild(clone); } catch (e) {}
-    }, durationMs);
-  }
-
-  function attachCaptivateClickTrigger() {
-    // Common Captivate wrapper selectors - extend if your wrapper uses another id/class
-    var selectors = ['#cpRoot', '#CP', '#Captivate', '.captivate', '.cp-stage', '.cp-root', '.cp-container'];
-
-    document.addEventListener('click', function (e) {
-      try {
-        for (var i = 0; i < selectors.length; i++) {
-          if (e.target.closest && e.target.closest(selectors[i])) {
-            // Show overlay for 3 seconds on every click inside the wrapper
-            showTransientOverlay(3000);
-            return;
-          }
+        // External checker ready → suppress permanently
+        if (
+          message.indexOf('External script loaded successfully') !== -1 ||
+          message.indexOf('Pronunciation checker initialized') !== -1 ||
+          message.indexOf('Loading animation hidden') !== -1
+        ) {
+          suppressAndCleanup();
+          return;
         }
-      } catch (err) { /* ignore */ }
-    }, true);
+
+        // Start of flow → ensure overlay shows (unless already suppressed)
+        if (!brainState.suppressed && (
+          message.indexOf('Starting pronunciation process') !== -1 ||
+          message.indexOf('Loading animation displayed') !== -1
+        )) {
+          setTimeout(function () {
+            if (!document.querySelector('.speaksmart-brain-overlay')) {
+              try { console.log('No brain animation detected after pronunciation start - triggering marketing display'); } catch (e) {}
+              showMarketingBrainAnimation();
+            }
+          }, 200);
+        }
+      };
+    } catch (e) {}
+
+    // Heartbeat / fallback: periodically ensure something is visible until suppressed
+    backupIntervalId = setInterval(function () {
+      if (brainState.suppressed) return;
+      if (!document.querySelector('.speaksmart-brain-overlay')) {
+        showMarketingBrainAnimation();
+      }
+    }, 1500);
+
+    // Optional explicit event from external script
+    window.addEventListener('speaksmart:external-ready', suppressAndCleanup, { once: true });
   }
 
-  // Activate the click trigger so the brain shows every time the Captivate wrapper is clicked.
-  attachCaptivateClickTrigger();
+  // ---- Public API ----------------------------------------------------------
+  var API = {
+    startAssetPrewarm: startAssetPrewarm,
+    showOverlay: showMarketingBrainAnimation,
+    hideOverlay: suppressAndCleanup,
+    init: function () {
+      startAssetPrewarm();
+      startAllMonitoring();
+    }
+  };
 
-  console.log('SpeakSmart bootstrap with beautiful neuron animation ready');
-})();
+  // Expose minimal surface
+  Object.defineProperty(window, 'SpeakSmartBootstrap', {
+    value: API,
+    writable: false,
+    configurable: false
+  });
+
+  // Auto-init on DOM ready
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', function () { API.init(); });
+  } else {
+    API.init();
+  }
+
+})(window, document);
