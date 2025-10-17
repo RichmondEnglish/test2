@@ -90,7 +90,18 @@
     return fetch(assetPreloadState.MANIFEST_URL, { mode: 'cors' })
       .then(function(r){ if (!r.ok) throw new Error('no manifest'); return r.json(); })
       .then(function(json){
-        var list = Array.isArray(json) ? json : (json.files || []);
+        // Handle the new manifest structure with assets array
+        var list = [];
+        if (json.assets && Array.isArray(json.assets)) {
+          list = json.assets.map(function(asset) {
+            return asset.name || asset.path;
+          }).filter(Boolean);
+        } else if (Array.isArray(json)) {
+          list = json;
+        } else if (json.files) {
+          list = json.files;
+        }
+
         return list.filter(ssIsImageFile).map(function(name){
           return assetPreloadState.BASE + name.replace(/^\//,'');
         });
@@ -356,10 +367,18 @@
     return brainOverlay;
   }
 
-  function startBrainAnimation(canvas) {
+  function startBrainAnimation(canvas, pathsData) {
     try {
       var ctx = canvas.getContext('2d');
       var last = performance.now();
+
+      // Use local copies of animation data to avoid race conditions
+      var localPaths = pathsData.paths.map(p => p.slice()); // Deep copy
+      var localPhases = pathsData.phases.slice();
+      var localSpeeds = pathsData.speeds.slice();
+      var localWidths = pathsData.widths.slice();
+      var lastFlash = -Infinity;
+      var flickIdx = null;
 
       function tick(now) {
         brainState.animationId = requestAnimationFrame(tick);
@@ -369,21 +388,22 @@
         ctx.clearRect(0,0,canvas.width,canvas.height);
 
         // animate phases
-        for (var i=0;i<brainState.phases.length;i++){
-          brainState.phases[i] = (brainState.phases[i] + brainState.speeds[i] * dt/1000) % 1;
+        for (var i=0;i<localPhases.length;i++){
+          localPhases[i] = (localPhases[i] + localSpeeds[i] * dt/1000) % 1;
         }
 
         // Flash effect
-        if (now - brainState.lastFlash > GAP_MS) {
-          brainState.lastFlash = now;
-          brainState.flickIdx = (brainState.flickIdx === null ? 0 : (brainState.flickIdx + 1) % brainState.paths.length);
+        if (now - lastFlash > GAP_MS) {
+          lastFlash = now;
+          flickIdx = (flickIdx === null ? 0 : (flickIdx + 1) % localPaths.length);
         }
 
-        for (var p=0;p<brainState.paths.length;p++){
-          var pts = brainState.paths[p];
+        for (var p=0;p<localPaths.length;p++){
+          var pts = localPaths[p];
+          if (!pts || pts.length === 0) continue; // Safety check
 
-          ctx.lineWidth = brainState.widths[p];
-          var alpha = (p === brainState.flickIdx) ? 1 : 0.6;
+          ctx.lineWidth = localWidths[p];
+          var alpha = (p === flickIdx) ? 1 : 0.6;
           ctx.strokeStyle = 'rgba(0, 200, 255,' + alpha + ')';
 
           ctx.beginPath();
@@ -396,9 +416,11 @@
           ctx.stroke();
 
           // glow dots
-          var t = brainState.phases[p];
+          var t = localPhases[p];
           var idx = Math.floor(lerp(0, pts.length-1, t));
-          var a = pts[idx], b = pts[(idx+1) % pts.length];
+          var a = pts[idx];
+          var b = pts[(idx+1) % pts.length];
+          if (!a || !b) continue; // Safety check
           var dx = b.x - a.x, dy = b.y - a.y;
           var px = a.x + dx * (t % 1), py = a.y + dy * (t % 1);
           ctx.beginPath();
@@ -447,8 +469,14 @@
       grayCircle.parentNode.replaceChild(brainOverlay, grayCircle);
       
       brainState.overlay = brainOverlay;
-      startBrainAnimation(brainState.canvas);
-      
+      // Pass animation data to avoid race condition
+      startBrainAnimation(brainState.canvas, {
+        paths: brainState.paths,
+        phases: brainState.phases,
+        speeds: brainState.speeds,
+        widths: brainState.widths
+      });
+
       console.log('INSTANT brain replacement successful!');
       
       // Pre-build next overlay for subsequent attempts
@@ -472,7 +500,12 @@
       var overlay = brainState.prebuiltOverlay || buildBrainOverlay();
       document.body.appendChild(overlay);
       brainState.overlay = overlay;
-      startBrainAnimation(brainState.canvas);
+      startBrainAnimation(brainState.canvas, {
+        paths: brainState.paths,
+        phases: brainState.phases,
+        speeds: brainState.speeds,
+        widths: brainState.widths
+      });
       console.log('Marketing brain overlay forced on screen');
     } catch (e) {
       console.log('Could not show marketing brain overlay', e && e.message);
