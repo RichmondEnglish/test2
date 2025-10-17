@@ -1,42 +1,15 @@
+/*  SpeakSmart Race-Condition-Proof Bootstrap with Marketing Safety Net */
+(function () {
+  if (window.__speakSmartPatched) return;
+  window.__speakSmartPatched = true;
 
-/*! SpeakSmart Bootstrap (Updated 2025-10-15)
- * - Lowered neuron overlay by ~30px (top: 65px)
- * - Proper cleanup & permanent suppression once external script is ready
- * - Robust asset prewarm via /assets/manifest.json with fallback hints
- * - Preload uses as="image" + eager decode for critical assets
- * - Guards against undefined path arrays in animation tick (prevents 'x' undefined)
- */
-(function (window, document) {
-  'use strict';
+  console.log('SpeakSmart robust bootstrap loaded');
 
-  // ---- Config & State ------------------------------------------------------
-  var HOST_BASE =
-    (window.SpeakSmartAssetsBase && String(window.SpeakSmartAssetsBase)) ||
-    'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com';
-
-  var assetPreloadState = {
-    BASE: HOST_BASE,
-    lastList: [],
-    // Optional fallback file name hints (relative to /assets or absolute)
-    CRITICAL_HINTS: [
-      '/assets/rich-e.png',
-      '/assets/rich-e-coach.png',
-      '/assets/SpeakSmart-loader.png',
-      '/assets/reading-tips-card.png',
-      '/assets/feedback-happy.png',
-      '/assets/feedback-neutral.png',
-      '/assets/feedback-tryagain.png'
-    ]
-  };
-
-  var backupIntervalId = null;
-  var secondaryObserver = null;
-
+  // Brain animation state
   var brainState = {
     animationId: null,
     canvas: null,
     overlay: null,
-    ctx: null,
     paths: [],
     phases: [],
     speeds: [],
@@ -44,124 +17,191 @@
     lastFlash: -Infinity,
     flickIdx: null,
     isReplacing: false,
-    prebuiltOverlay: null,
-    // NEW: permanent suppression after external script is active
-    suppressed: false,
-    originalConsoleLog: null,
-    primaryObserver: null
+    prebuiltOverlay: null  // Pre-built overlay ready for instant swap
   };
 
-  // ---- Logging banner ------------------------------------------------------
-  try {
-    console.log('SpeakSmart robust bootstrap loaded');
-  } catch (e) {}
+  /* -----------------------------------------------------------------------
+   *  ASSET PRELOAD & CACHE WARMING (images for bubbles, badges, etc.)
+   *  Host is different from where this bootstrap lives.
+   * -------------------------------------------------------------------- */
 
-  // ---- Utilities -----------------------------------------------------------
-  function ssUnique(arr) {
-    var seen = Object.create(null);
-    var out = [];
-    for (var i = 0; i < arr.length; i++) {
-      var k = String(arr[i]);
-      if (!seen[k]) {
-        seen[k] = 1;
-        out.push(arr[i]);
+  var assetPreloadState = {
+    HOST: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com',
+    BASE: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/assets/',
+    MANIFEST_URL: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/assets/manifest.json',
+    MANIFEST_JS_URL: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/assets/manifest.js',
+    // If manifest/index scrape fail, we'll still warm these:
+    CRITICAL_HINTS: [
+      'SpeakSmart-loader.png',
+      'speaksmart-loading.png','rich-e.png','rich-e-detective.png',
+      'rich-e-coach.png','rich-e-mechanic.png',
+      'rich-e-reading-tips.png','rich-e-reading-tips2.png','rich-e-OP1.png', 'rich-e-2star.png', 'rich-e-3star.png', 'rich-e-4star.png', 'rich-e-5star.png'
+    ],
+    LOADER_IMAGE: 'SpeakSmart-loader.png',
+    imgRefs: [],
+    lastList: []
+  };
+
+  (function preconnectToAssets() {
+    try {
+      var head = document.head || document.getElementsByTagName('head')[0];
+      if (!head) return;
+      var l1 = document.createElement('link');
+      l1.rel = 'preconnect';
+      l1.href = assetPreloadState.HOST;
+      l1.crossOrigin = 'anonymous';
+      head.appendChild(l1);
+
+      var l2 = document.createElement('link');
+      l2.rel = 'dns-prefetch';
+      l2.href = assetPreloadState.HOST;
+      head.appendChild(l2);
+    } catch (e) {}
+  })();
+
+  function ssInsertPreloadLink(href) {
+    try {
+      var head = document.head || document.getElementsByTagName('head')[0];
+      if (!head) return;
+      var link = document.createElement('link');
+      link.rel = 'preload';
+      link.as = 'image';
+      link.href = href;
+      link.crossOrigin = 'anonymous'; // safe if any canvas draws later
+      head.appendChild(link);
+    } catch (e) {}
+  }
+
+  function ssWarmImage(href) {
+    var img = new Image();
+    // img.crossOrigin = 'anonymous'; // uncomment if you draw to <canvas>
+    img.decoding = 'async';
+    img.loading = 'eager';
+    img.fetchPriority = 'high';
+    img.src = href;
+    assetPreloadState.imgRefs.push(img); // keep ref to avoid GC
+  }
+
+  function ssIsImageFile(name) {
+    return /\.(png|jpg|jpeg|gif|webp|svg)$/i.test(name);
+  }
+
+  function ssFetchManifestList() {
+    return fetch(assetPreloadState.MANIFEST_URL, { mode: 'cors' })
+      .then(function(r){ if (!r.ok) throw new Error('no manifest'); return r.json(); })
+      .then(function(json){
+        var list = Array.isArray(json) ? json : (json.files || []);
+        return list.filter(ssIsImageFile).map(function(name){
+          return assetPreloadState.BASE + name.replace(/^\//,'');
+        });
+      });
+  }
+  function ssFetchManifestViaScript() {
+    return new Promise(function (resolve, reject) {
+      var script = document.createElement('script');
+      var done = false;
+      function cleanup() {
+        try { if (script && script.parentNode) script.parentNode.removeChild(script); } catch (e) {}
+        try { delete window.SPEAKSMART_ASSETS; } catch (e) {}
+        try { delete window.SpeakSmartAssets; } catch (e) {}
       }
+      script.async = true;
+      script.src = assetPreloadState.MANIFEST_JS_URL + '?cb=' + Date.now();
+      script.onload = function () {
+        if (done) return;
+        done = true;
+        try {
+          var arr = window.SPEAKSMART_ASSETS || window.SpeakSmartAssets;
+          if (Array.isArray(arr) && arr.length) {
+            var list = arr.filter(ssIsImageFile).map(function (name) {
+              return assetPreloadState.BASE + String(name).replace(/^\//, '');
+            });
+            cleanup();
+            resolve(list);
+            return;
+          }
+          cleanup();
+          reject(new Error('manifest.js loaded but no usable array found'));
+        } catch (err) {
+          cleanup();
+          reject(err);
+        }
+      };
+      script.onerror = function () {
+        if (done) return;
+        done = true;
+        cleanup();
+        reject(new Error('manifest.js failed to load'));
+      };
+      (document.head || document.documentElement).appendChild(script);
+    });
+  }
+
+
+  function ssScrapeDirectoryIndex() {
+    return fetch(assetPreloadState.BASE, { mode: 'cors' })
+      .then(function(r){ if (!r.ok) throw new Error('no index'); return r.text(); })
+      .then(function(html){
+        var out = [];
+        var re = /href\s*=\s*"(.*?)"/ig, m;
+        while ((m = re.exec(html))) {
+          var href = m[1];
+          if (ssIsImageFile(href)) {
+            if (!/^https?:\/\//i.test(href)) href = assetPreloadState.BASE + href.replace(/^\//,'');
+            out.push(href);
+          }
+        }
+        if (!out.length) throw new Error('no images in index');
+        return out;
+      });
+  }
+
+  function ssFallbackList() {
+    var list = (assetPreloadState.CRITICAL_HINTS || []).filter(ssIsImageFile).map(function(n){
+      return assetPreloadState.BASE + n.replace(/^\//,'');
+    });
+    return Promise.resolve(list);
+  }
+
+  function ssUnique(list) {
+    var seen = Object.create(null), out = [];
+    for (var i=0;i<list.length;i++){
+      var x = list[i];
+      if (!seen[x]) { seen[x] = 1; out.push(x); }
     }
     return out;
   }
 
-  function ssIsImageFile(u) {
-    return /\.(png|jpe?g|gif|webp|svg)(\?|#|$)/i.test(String(u || ''));
-  }
-
-  function ssParseManifestJSON(json, base) {
-    try {
-      var out = [];
-
-      if (Array.isArray(json)) {
-        // legacy: ["a.png","b.png"]
-        out = json.slice();
-      } else if (json && Array.isArray(json.files)) {
-        // legacy: { files: ["a.png","b.png"] }
-        out = json.files.slice();
-      } else if (json && Array.isArray(json.assets)) {
-        // current: { assets: [{name,path,preload,...}], preload:{criticalAssets:[...]} }
-        var byName = Object.create(null);
-        json.assets.forEach(function (a) {
-          if (!a || !a.path) return;
-          byName[a.name] = a.path;
-          if (a.preload === true) out.push(a.path);
-        });
-        if (json.preload && Array.isArray(json.preload.criticalAssets)) {
-          json.preload.criticalAssets.forEach(function (name) {
-            if (byName[name]) out.push(byName[name]);
-          });
-        }
-      }
-
-      out = (out || []).map(function (p) {
-        if (!p) return null;
-        if (/^https?:\/\//i.test(p)) return p;
-        return base.replace(/\/+$/,'') + '/' + String(p).replace(/^\/+/,'');
-      }).filter(Boolean);
-
-      out = out.filter(ssIsImageFile);
-      return ssUnique(out);
-    } catch (e) {
-      console.warn('SpeakSmart: manifest parse failed', e);
-      return [];
-    }
-  }
-
   function ssPreloadImages(urls, opts) {
-    urls = Array.isArray(urls) ? urls.slice() : [];
-    var criticalLimit = (opts && opts.criticalLimit) || 24;
+    opts = opts || {};
+    var criticalCount = Math.min(urls.length, opts.criticalLimit || 24);
 
-    // Critical: preload + eager decode
-    urls.slice(0, criticalLimit).forEach(function (u) {
-      try {
-        var link = document.createElement('link');
-        link.rel = 'preload';
-        link.as = 'image';
-        link.href = u;
-        link.crossOrigin = 'anonymous';
-        document.head.appendChild(link);
+    // Preload the first N aggressively
+    for (var i=0; i<criticalCount; i++) {
+      ssInsertPreloadLink(urls[i]);
+      ssWarmImage(urls[i]);
+    }
 
-        var img = new Image();
-        img.decoding = 'async';
-        img.loading = 'eager';
-        img.src = u;
-      } catch (e) {}
-    });
-
-    // Non-critical: prefetch low priority
-    urls.slice(criticalLimit).forEach(function (u) {
-      try {
-        var link = document.createElement('link');
-        link.rel = 'prefetch';
-        link.as = 'image';
-        link.href = u;
-        link.crossOrigin = 'anonymous';
-        document.head.appendChild(link);
-      } catch (e) {}
+    // Warm the rest during idle time
+    var rest = urls.slice(criticalCount);
+    var idle = window.requestIdleCallback || function(cb){ return setTimeout(function(){ cb({didTimeout:true,timeRemaining:function(){return 0;}}); }, 250); };
+    idle(function(){
+      for (var j=0; j<rest.length; j++) ssWarmImage(rest[j]);
     });
   }
 
   function startAssetPrewarm() {
-    var BASE = assetPreloadState.BASE || HOST_BASE;
-    fetch(BASE + '/assets/manifest.json', { cache: 'no-store', credentials: 'omit' })
-      .then(function (r) { return r.ok ? r.json() : []; })
-      .then(function (json) { return ssParseManifestJSON(json, BASE); })
-      .then(function (list) {
-        if (!list.length) {
-          var fb = (assetPreloadState.CRITICAL_HINTS || [])
-            .filter(ssIsImageFile)
-            .map(function (n) { return BASE.replace(/\/+$/,'') + '/' + String(n).replace(/^\//,''); });
-          if (fb.length) {
-            console.log('SpeakSmart: manifest empty; falling back to critical hints (' + fb.length + ')');
-            list = ssUnique(fb);
-          }
-        }
+    if (navigator.connection && navigator.connection.saveData) {
+      console.log('SpeakSmart: saveData on; skipping heavy preloads');
+      return;
+    }
+
+    ssFetchManifestList()
+      .catch(function(){ return ssFetchManifestViaScript(); })
+      .catch(function(){ return ssScrapeDirectoryIndex(); })
+      .catch(function(){ return ssFallbackList(); })
+      .then(function(list){
+        list = ssUnique(list);
         assetPreloadState.lastList = list;
         if (!list.length) {
           console.log('SpeakSmart: no assets discovered to preload');
@@ -170,287 +210,414 @@
         console.log('SpeakSmart: preloading', list.length, 'asset(s)');
         ssPreloadImages(list, { criticalLimit: 24 });
       })
-      .catch(function (e) {
-        console.warn('SpeakSmart: manifest fetch failed, using hints', e);
-        var BASE = assetPreloadState.BASE || HOST_BASE;
-        var fb = (assetPreloadState.CRITICAL_HINTS || [])
-          .filter(ssIsImageFile)
-          .map(function (n) { return BASE.replace(/\/+$/,'') + '/' + String(n).replace(/^\//,''); });
-        if (fb.length) ssPreloadImages(ssUnique(fb), { criticalLimit: 24 });
+      .catch(function(err){
+        console.log('SpeakSmart: asset prewarm error:', err && err.message);
       });
   }
 
-  // ---- Brain Overlay + Animation ------------------------------------------
-  function buildBrainOverlay() {
-    if (brainState.prebuiltOverlay) return brainState.prebuiltOverlay;
+  // Debug hook (optional)
+  window.SpeakSmartPreload = {
+    status: function(){
+      return {
+        discovered: assetPreloadState.lastList.slice(),
+        refsHeld: assetPreloadState.imgRefs.length
+      };
+    }
+  };
 
-    var overlay = document.createElement('div');
-    overlay.className = 'speaksmart-brain-overlay';
-    overlay.setAttribute('role', 'presentation');
-    overlay.style.cssText = [
-      'position:fixed',
-      'inset:0',
-      'z-index:999999',
-      'pointer-events:none',
-      'background:linear-gradient(180deg, rgba(0,0,0,0.25), rgba(0,0,0,0.15))'
-    ].join(';');
+  // Kick off asset warmup ASAP without blocking anything critical
+  try { setTimeout(startAssetPrewarm, 0); } catch(e) {}
+
+  // Animation constants
+  var FLASH_MS = 90;
+  var GAP_MS = 240;
+
+  /* -----------------------------------------------------------------------
+   *  BRAIN ANIMATION (overlay that replaces the gray circle loader)
+   * -------------------------------------------------------------------- */
+
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  function scale(pt) {
+    var W = 480, H = 360;
+    return { x: pt.x / 480 * W, y: pt.y / 360 * H };
+  }
+
+  function rotate(pt, pivot, deg) {
+    var r = deg * Math.PI / 180;
+    var c = Math.cos(r);
+    var s = Math.sin(r);
+    var dx = pt.x - pivot.x;
+    var dy = pt.y - pivot.y;
+    return {
+      x: pivot.x + dx * c - dy * s,
+      y: pivot.y + dx * s + dy * c
+    };
+  }
+
+  function spline(ctx, pts) {
+    ctx.beginPath();
+    ctx.moveTo(pts[0].x, pts[0].y);
+    for (var i = 1; i < pts.length; i++) {
+      var mx = (pts[i - 1].x + pts[i].x) / 2;
+      var my = (pts[i - 1].y + pts[i].y) / 2;
+      ctx.quadraticCurveTo(pts[i - 1].x, pts[i - 1].y, mx, my);
+    }
+    ctx.stroke();
+  }
+
+  function buildBrainOverlay() {
+    var brainOverlay = document.createElement('div');
+    brainOverlay.className = 'speaksmart-brain-overlay';
+    brainOverlay.style.position = 'fixed';
+    brainOverlay.style.left = '50%';
+    brainOverlay.style.top = '50%';
+    brainOverlay.style.transform = 'translate(-50%, -50%)';
+    brainOverlay.style.width = '480px';
+    brainOverlay.style.height = '360px';
+    brainOverlay.style.background = 'transparent';
+    brainOverlay.style.zIndex = '9999';
+    brainOverlay.style.pointerEvents = 'none';
+
+    var loaderDiv = document.createElement('div');
+    loaderDiv.style.position = 'relative';
+    loaderDiv.style.width = '480px';
+    loaderDiv.style.background = 'transparent';
+
+    var img = document.createElement('img');
+    img.src = assetPreloadState.BASE + assetPreloadState.LOADER_IMAGE;
+    img.style.width = '100%';
+    img.style.display = 'block';
+    img.onerror = function() { 
+      console.log('Brain loader background image not found at Heroku, falling back to local file');
+      try { img.src = 'SpeakSmart-loader.png'; } catch(e) {}
+    };
+    loaderDiv.appendChild(img);
 
     var canvas = document.createElement('canvas');
-    canvas.width = Math.max(320, window.innerWidth);
-    canvas.height = Math.max(240, window.innerHeight);
+    canvas.id = 'brainCanvas';
+    canvas.width = 200;
+    canvas.height = 230;
     canvas.style.position = 'absolute';
     canvas.style.left = '50%';
-    canvas.style.transform = 'translateX(-50%)';
-    // Lowered by ~30px from prior 35px to 65px
-    canvas.style.top = '85px';
-    canvas.style.width = 'min(96vw, 960px)';
-    canvas.style.height = 'min(72vh, 540px)';
-    canvas.style.opacity = '0.95';
+    canvas.style.top = '100px';
+    canvas.style.width = '200px';
+    canvas.style.height = '230px';
+    canvas.style.marginLeft = '-100px';
+    canvas.style.background = 'transparent';
+    
+    var clipPath = 'path("M 20 5 Q 60 -15 100 5 Q 140 -15 180 5 ...0 225 100 215 Q 60 225 20 195 Q -5 145 20 100 Q -5 55 20 5 Z")';
+    canvas.style.clipPath = clipPath;
 
-    overlay.appendChild(canvas);
-    brainState.prebuiltOverlay = overlay;
+    loaderDiv.appendChild(canvas);
+    brainOverlay.appendChild(loaderDiv);
+
+    // Store references for instant activation
+    brainState.prebuiltOverlay = brainOverlay;
     brainState.canvas = canvas;
-    brainState.ctx = canvas.getContext('2d');
 
-    // Prepare simple paths (neuron arcs)
-    seedNeuronPaths(canvas);
+    // Build path sets
+    var ctx = canvas.getContext('2d');
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = 'rgba(0, 200, 255, 0.9)';
 
-    return overlay;
-  }
+    var W = 200, H = 230;
+    var pivot = { x: W / 2, y: H / 2 };
 
-  function seedNeuronPaths(canvas) {
-    brainState.paths = [];
-    brainState.phases = [];
-    brainState.speeds = [];
-    brainState.widths = [];
-
-    var w = canvas.width;
-    var h = canvas.height;
-    var cx = Math.floor(w * 0.5);
-    var cy = Math.floor(h * 0.38);
-    var R = Math.floor(Math.min(w, h) * 0.28);
-
-    function circlePoints(cx, cy, r, count) {
-      var pts = [];
-      for (var i = 0; i < count; i++) {
-        var t = (Math.PI * 2 * i) / count;
-        pts.push({ x: cx + Math.cos(t) * r, y: cy + Math.sin(t) * r });
-      }
-      return pts;
-    }
-
-    // Three concentric "neuron orbit" rings
-    var rings = [
-      circlePoints(cx, cy, R * 0.70, 24),
-      circlePoints(cx, cy, R * 1.00, 28),
-      circlePoints(cx, cy, R * 1.35, 32)
+    // Base paths (rough "brain" clusters)
+    var baseLeftTop = [
+      { x: 110, y: 65 }, { x: 90, y: 30 }, { x: 50, y: 40 }, { x: 75, y: 65 }
+    ];
+    var baseLeftBot = [
+      { x: 100, y: 105 }, { x: 75, y: 135 }, { x: 45, y: 120 }, { x: 65, y: 95 }
+    ];
+    var baseRightTop = [
+      { x: 100, y: 65 }, { x: 120, y: 30 }, { x: 160, y: 40 }, { x: 135, y: 65 }
+    ];
+    var baseRightBot = [
+      { x: 100, y: 105 }, { x: 125, y: 135 }, { x: 155, y: 120 }, { x: 135, y: 95 }
     ];
 
-    for (var i = 0; i < rings.length; i++) {
-      brainState.paths.push(rings[i]);
-      brainState.phases.push(Math.random() * Math.PI * 2);
-      brainState.speeds.push(0.008 + Math.random() * 0.007);
-      brainState.widths.push(2 + (i % 2));
+    // Mirror & nudge
+    function mirrorPath(path) {
+      return path.map(function(p){ return { x: W - (p.x), y: p.y }; });
+    }
+
+    var leftTop = baseLeftTop;
+    var leftBot = baseLeftBot;
+    var rightTop = mirrorPath(baseLeftTop);
+    var rightBot = mirrorPath(baseLeftBot);
+
+    brainState.paths = [leftTop, leftBot, rightTop, rightBot];
+    brainState.phases = [0, 0.4, 0.2, 0.6];
+    brainState.speeds = [1.7, 1.3, 1.6, 1.2];
+    brainState.widths = [2, 2, 2, 2];
+
+    return brainOverlay;
+  }
+
+  function startBrainAnimation(canvas) {
+    try {
+      var ctx = canvas.getContext('2d');
+      var last = performance.now();
+
+      function tick(now) {
+        brainState.animationId = requestAnimationFrame(tick);
+        var dt = Math.min(33, now - last);
+        last = now;
+
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+
+        // animate phases
+        for (var i=0;i<brainState.phases.length;i++){
+          brainState.phases[i] = (brainState.phases[i] + brainState.speeds[i] * dt/1000) % 1;
+        }
+
+        // Flash effect
+        if (now - brainState.lastFlash > GAP_MS) {
+          brainState.lastFlash = now;
+          brainState.flickIdx = (brainState.flickIdx === null ? 0 : (brainState.flickIdx + 1) % brainState.paths.length);
+        }
+
+        for (var p=0;p<brainState.paths.length;p++){
+          var pts = brainState.paths[p];
+
+          ctx.lineWidth = brainState.widths[p];
+          var alpha = (p === brainState.flickIdx) ? 1 : 0.6;
+          ctx.strokeStyle = 'rgba(0, 200, 255,' + alpha + ')';
+
+          ctx.beginPath();
+          ctx.moveTo(pts[0].x, pts[0].y);
+          for (var i = 1; i < pts.length; i++) {
+            var mx = (pts[i - 1].x + pts[i].x) / 2;
+            var my = (pts[i - 1].y + pts[i].y) / 2;
+            ctx.quadraticCurveTo(pts[i - 1].x, pts[i - 1].y, mx, my);
+          }
+          ctx.stroke();
+
+          // glow dots
+          var t = brainState.phases[p];
+          var idx = Math.floor(lerp(0, pts.length-1, t));
+          var a = pts[idx], b = pts[(idx+1) % pts.length];
+          var dx = b.x - a.x, dy = b.y - a.y;
+          var px = a.x + dx * (t % 1), py = a.y + dy * (t % 1);
+          ctx.beginPath();
+          ctx.arc(px, py, 2.8, 0, Math.PI*2);
+          ctx.fillStyle = 'rgba(0, 255, 200, 0.9)';
+          ctx.fill();
+        }
+      }
+
+      brainState.animationId = requestAnimationFrame(tick);
+    } catch (e) {
+      console.log('Brain animation failed to start', e && e.message);
     }
   }
 
-  function startBrainAnimation() {
-    if (!brainState.canvas || !brainState.ctx) return;
+  /* -----------------------------------------------------------------------
+   *  INSTANT REPLACEMENT of the gray circle loader
+   * -------------------------------------------------------------------- */
 
-    var ctx = brainState.ctx;
-    var W = brainState.canvas.width;
-    var H = brainState.canvas.height;
+  function instantReplacement(grayCircle) {
+    if (!grayCircle || brainState.isReplacing) return false;
+    brainState.isReplacing = true;
 
-    function tick() {
-      try {
-        ctx.clearRect(0, 0, W, H);
-        ctx.save();
-        ctx.globalCompositeOperation = 'lighter';
-
-        for (var p = 0; p < brainState.paths.length; p++) {
-          var pts = brainState.paths[p];
-          if (!pts || pts.length < 2) continue; // guard
-
-          ctx.beginPath();
-          for (var i = 0; i < pts.length; i++) {
-            var a = pts[i];
-            var b = pts[(i + 1) % pts.length];
-            if (!a || !b) continue; // guard
-            ctx.moveTo(a.x, a.y);
-            ctx.lineTo(b.x, b.y);
-          }
-          ctx.lineWidth = brainState.widths[p] || 2;
-          var alpha = (p === brainState.flickIdx) ? 1 : 0.6;
-          ctx.strokeStyle = 'rgba(120,180,255,' + alpha + ')';
-          ctx.stroke();
-        }
-
-        // Animate a flickering highlight ring
-        if (performance.now() - brainState.lastFlash > 420) {
-          brainState.flickIdx = (brainState.flickIdx === null)
-            ? 0
-            : (brainState.flickIdx + 1) % brainState.paths.length;
-          brainState.lastFlash = performance.now();
-        }
-
-        // Phase drift (subtle orbital motion)
-        for (var r = 0; r < brainState.paths.length; r++) {
-          brainState.phases[r] += brainState.speeds[r];
-          var pts2 = brainState.paths[r];
-          if (!pts2 || !pts2.length) continue;
-          for (var j = 0; j < pts2.length; j++) {
-            var pt = pts2[j];
-            if (!pt) continue;
-            var d = Math.sin(brainState.phases[r] + j * 0.3) * 0.8;
-            pt.x += Math.cos(j) * 0.05 * d;
-            pt.y += Math.sin(j) * 0.05 * d;
-          }
-        }
-
-        ctx.restore();
-      } catch (e) {
-        // swallow to avoid breaking the app
-      }
-
-      brainState.animationId = window.requestAnimationFrame(tick);
+    // Quick validation
+    if (!grayCircle || !grayCircle.parentNode) {
+      console.log('No gray circle parent found, aborting instant replacement');
+      brainState.isReplacing = false;
+      return false;
     }
 
-    if (brainState.animationId) cancelAnimationFrame(brainState.animationId);
-    brainState.animationId = window.requestAnimationFrame(tick);
+    // Skip if it's our own overlay
+    if (grayCircle.className && grayCircle.className.includes('speaksmart-brain-overlay')) {
+      console.log('Ignoring our own brain overlay');
+      brainState.isReplacing = false;
+      return false;
+    }
+
+    try {
+      // Use pre-built overlay for instant swap
+      var brainOverlay = brainState.prebuiltOverlay;
+      if (!brainOverlay) {
+        brainOverlay = buildBrainOverlay();
+      }
+
+      // INSTANT replacement - no setTimeout
+      grayCircle.parentNode.replaceChild(brainOverlay, grayCircle);
+      
+      brainState.overlay = brainOverlay;
+      startBrainAnimation(brainState.canvas);
+      
+      console.log('INSTANT brain replacement successful!');
+      
+      // Pre-build next overlay for subsequent attempts
+      setTimeout(function() {
+        try { buildBrainOverlay(); } catch (e) {}
+      }, 0);
+
+    } catch (e) {
+      console.log('Instant replacement failed', e && e.message);
+    } finally {
+      brainState.isReplacing = false;
+    }
+    return true;
   }
 
   function showMarketingBrainAnimation() {
     try {
-      if (brainState.suppressed) return;
       var existing = document.querySelector('.speaksmart-brain-overlay');
       if (existing) return;
 
-      var overlay = buildBrainOverlay();
+      var overlay = brainState.prebuiltOverlay || buildBrainOverlay();
       document.body.appendChild(overlay);
-      startBrainAnimation();
-    } catch (e) {}
-  }
-
-  function cleanup() {
-    try {
-      if (brainState.animationId) {
-        cancelAnimationFrame(brainState.animationId);
-        brainState.animationId = null;
-      }
-    } catch (e) {}
-    try {
-      if (brainState.overlay && brainState.overlay.parentNode) {
-        brainState.overlay.parentNode.removeChild(brainState.overlay);
-      }
-    } catch (e) {}
-    try {
-      if (backupIntervalId) {
-        clearInterval(backupIntervalId);
-        backupIntervalId = null;
-      }
-    } catch (e) {}
-  }
-
-  function suppressAndCleanup() {
-    if (brainState.suppressed) return;
-    brainState.suppressed = true;
-
-    try { brainState.primaryObserver && brainState.primaryObserver.disconnect(); } catch (e) {}
-    try { secondaryObserver && secondaryObserver.disconnect && secondaryObserver.disconnect(); } catch (e) {}
-
-    cleanup();
-
-    if (brainState.originalConsoleLog) {
-      console.log = brainState.originalConsoleLog;
-      brainState.originalConsoleLog = null;
+      brainState.overlay = overlay;
+      startBrainAnimation(brainState.canvas);
+      console.log('Marketing brain overlay forced on screen');
+    } catch (e) {
+      console.log('Could not show marketing brain overlay', e && e.message);
     }
   }
 
+  /* -----------------------------------------------------------------------
+   *  OBSERVERS: watch for the gray circle (#pronunciation-loading-overlay)
+   * -------------------------------------------------------------------- */
   function startAllMonitoring() {
+    // Build first overlay upfront
+    buildBrainOverlay();
+
+    // Primary observer
+    var observer = new MutationObserver(function (mutations) {
+      mutations.forEach(function (m) {
+        m.addedNodes.forEach(function (node) {
+          if (node.nodeType !== 1) return;
+
+          // Direct match
+          if (node.id === 'pronunciation-loading-overlay') {
+            instantReplacement(node);
+            return;
+          }
+
+          // Search subtree
+          if (node.querySelector) {
+            var t = node.querySelector('#pronunciation-loading-overlay');
+            if (t) instantReplacement(t);
+          }
+        });
+      });
+    });
+
     try {
-      console.log('SpeakSmart race-condition-proof bootstrap with marketing safety net ready');
-    } catch (e) {}
+      observer.observe(document.body, { childList: true, subtree: true });
+    } catch (e) {
+      document.addEventListener('DOMContentLoaded', function(){
+        try { observer.observe(document.body, { childList: true, subtree: true }); } catch (e2) {}
+      });
+    }
 
-    // Observe DOM in case we want additional future hooks
-    try {
-      var observer = new MutationObserver(function () { /* reserved */ });
-      brainState.primaryObserver = observer;
-      observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
-    } catch (e) {}
-
-    try {
-      console.log('Starting backup monitoring for missed gray circles');
-      console.log('Multi-layer monitoring system active');
-    } catch (e) {}
-
-    // Watch console messages from external script to know when to suppress overlay
-    try {
-      var originalConsoleLog = console.log;
-      brainState.originalConsoleLog = originalConsoleLog;
-      console.log = function () {
-        originalConsoleLog.apply(console, arguments);
-        var message = Array.prototype.slice.call(arguments).join(' ');
-
-        // External checker ready → suppress permanently
-        if (
-          message.indexOf('External script loaded successfully') !== -1 ||
-          message.indexOf('Pronunciation checker initialized') !== -1 ||
-          message.indexOf('Loading animation hidden') !== -1
-        ) {
-          suppressAndCleanup();
-          return;
-        }
-
-        // Start of flow → ensure overlay shows (unless already suppressed)
-        if (!brainState.suppressed && (
-          message.indexOf('Starting pronunciation process') !== -1 ||
-          message.indexOf('Loading animation displayed') !== -1
-        )) {
-          setTimeout(function () {
-            if (!document.querySelector('.speaksmart-brain-overlay')) {
-              try { console.log('No brain animation detected after pronunciation start - triggering marketing display'); } catch (e) {}
-              showMarketingBrainAnimation();
-            }
-          }, 200);
-        }
-      };
-    } catch (e) {}
-
-    // Heartbeat / fallback: periodically ensure something is visible until suppressed
-    backupIntervalId = setInterval(function () {
-      if (brainState.suppressed) return;
-      if (!document.querySelector('.speaksmart-brain-overlay')) {
-        showMarketingBrainAnimation();
+    // Console hooks: sometimes the overlay appears so briefly that we miss it
+    var originalConsoleLog = console.log;
+    console.log = function() {
+      originalConsoleLog.apply(console, arguments);
+      
+      // Detect when pronunciation starts but we missed the gray circle
+      var message = Array.prototype.slice.call(arguments).join(' ');
+      if (message.includes('Starting pronunciation process') || 
+          message.includes('Loading animation displayed')) {
+        
+        // Small delay to see if normal replacement worked
+        setTimeout(function() {
+          if (!brainState.overlay || !brainState.overlay.parentNode) {
+            console.log('No brain animation detected after pronunciation start - triggering marketing display');
+            showMarketingBrainAnimation();
+          }
+        }, 200);
       }
-    }, 1500);
-
-    // Optional explicit event from external script
-    window.addEventListener('speaksmart:external-ready', suppressAndCleanup, { once: true });
+    };
   }
 
-  // ---- Public API ----------------------------------------------------------
-  var API = {
-    startAssetPrewarm: startAssetPrewarm,
-    showOverlay: showMarketingBrainAnimation,
-    hideOverlay: suppressAndCleanup,
-    init: function () {
-      startAssetPrewarm();
-      startAllMonitoring();
-    }
-  };
+  /* -----------------------------------------------------------------------
+   *  BACKUP MONITORING STRATEGY: Continuously watch for brief appearances
+   * -------------------------------------------------------------------- */
+  var monitoringInterval = null;
+  
+  function startBackupMonitoring() {
+    if (monitoringInterval) return;
+    
+    console.log('Starting backup monitoring for missed gray circles');
+    
+    monitoringInterval = setInterval(function() {
+      try {
+        var el = document.getElementById('pronunciation-loading-overlay');
+        if (el) instantReplacement(el);
+      } catch (e) {}
+    }, 350);
+  }
 
-  // Expose minimal surface
-  Object.defineProperty(window, 'SpeakSmartBootstrap', {
-    value: API,
-    writable: false,
-    configurable: false
+  function stopBackupMonitoring() {
+    if (monitoringInterval) {
+      clearInterval(monitoringInterval);
+      monitoringInterval = null;
+      console.log('Stopped backup monitoring');
+    }
+  }
+
+  // Secondary observer on document.documentElement for broader coverage
+  var secondaryObserver = new MutationObserver(function (mutations) {
+    mutations.forEach(function (m) {
+      m.addedNodes.forEach(function (node) {
+        if (node.nodeType !== 1) return;
+        
+        // Look for the target element in the added subtree
+        if (node.id === 'pronunciation-loading-overlay') {
+          instantReplacement(node);
+        } else if (node.querySelector) {
+          var grayCircle = node.querySelector('#pronunciation-loading-overlay:not(.speaksmart-brain-overlay)');
+          if (grayCircle) {
+            instantReplacement(grayCircle);
+          }
+        }
+      });
+    });
   });
 
-  // Auto-init on DOM ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', function () { API.init(); });
-  } else {
-    API.init();
+  function cleanup() {
+    console.log('Cleaning up brain animation');
+    
+    stopBackupMonitoring();
+    
+    if (brainState.animationId) {
+      cancelAnimationFrame(brainState.animationId);
+      brainState.animationId = null;
+    }
+    if (brainState.overlay && brainState.overlay.parentNode) {
+      try { brainState.overlay.parentNode.removeChild(brainState.overlay); } catch(e){}
+    }
+    brainState.overlay = null;
+    brainState.canvas = null;
   }
 
-})(window, document);
+  // Kick everything off (DOMContentLoaded guards included)
+  function startSystem() {
+    try {
+      startAllMonitoring();
+      startBackupMonitoring();
+      
+      // Pre-build first overlay
+      buildBrainOverlay();
+      
+      console.log('Multi-layer monitoring system active');
+    } catch (e) {
+      console.log('Bootstrap error', e && e.message);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startSystem);
+  } else {
+    startSystem();
+  }
+
+  // Initialize the robust system
+  console.log('SpeakSmart race-condition-proof bootstrap with marketing safety net ready');
+})();
