@@ -5,6 +5,253 @@
 
   console.log('SpeakSmart robust bootstrap loaded');
 
+  // === [ANCHOR: SPEAKSMART ELEMENT MARKER SYSTEM] ===
+  // Marker system to identify elements created by SpeakSmart scripts
+  window.SpeakSmartElementMarker = {
+    marker: 'data-speaks-smart-element',
+    _currentType: 'speaksmart', // default until router sets it
+
+    // Set the current script type (called by router before init)
+    setType: function (type) {
+      this._currentType = String(type || 'speaksmart');
+      console.log(`[SPEAKSMART-MARKER] Type set to: ${this._currentType}`);
+    },
+
+    // Mark an element as created by a specific script
+    markElement: function (element, explicitType) {
+      if (element && element.setAttribute) {
+        const t = explicitType || this._currentType;
+        element.setAttribute(this.marker, t);
+        console.log(`[SPEAKSMART-MARKER] Marked ${t} element:`, element.tagName, element.id || element.className);
+      }
+    },
+
+    // Mark all child elements of a container
+    markContainer: function (container, explicitType) {
+      if (!container || !container.querySelectorAll) return;
+      const t = explicitType || this._currentType;
+      container.querySelectorAll('*').forEach(el => this.markElement(el, t));
+    },
+
+    // Check if element is marked
+    isMarked: function (element) {
+      return element && element.hasAttribute && element.hasAttribute(this.marker);
+    },
+
+    // Enhanced cleanup - optionally target specific script type
+    cleanupMarkedElements: function (type /* optional */) {
+      const sel = type
+        ? `[${this.marker}="${type}"]`
+        : `[${this.marker}]`;
+      const nodes = document.querySelectorAll(sel);
+      let n = 0;
+      nodes.forEach(el => { 
+        if (el.parentNode) { 
+          el.parentNode.removeChild(el); 
+          n++; 
+        } 
+      });
+      console.log(`[SPEAKSMART-MARKER] Removed ${n} ${type || 'all'} marked elements`);
+      return n;
+    },
+
+    // Enhanced pre-script cleanup function
+    comprehensivePreScriptCleanup: function () {
+      console.log('[BOOTSTRAP-CLEANUP] Starting comprehensive cleanup before script loading');
+      let totalCleaned = 0;
+
+      // Only remove previously marked stuff (any type)
+      totalCleaned += this.cleanupMarkedElements();
+
+      // Targeted ID sweep for known leftovers (safe)
+      ['reading-container','reading-backdrop','circularPrompt','expected-phrase-bubble',
+       'grammar-container','pronunciation-container','feedback-popup','pronunciation-feedback']
+        .forEach(id => { 
+          const el = document.getElementById(id);
+          if (el && el.parentNode) { 
+            el.parentNode.removeChild(el); 
+            totalCleaned++; 
+          }
+        });
+
+      // Reset registry flags
+      if (window.SpeakSmartScriptRegistry) {
+        window.SpeakSmartScriptRegistry.reading = null;
+        window.SpeakSmartScriptRegistry.grammar = null;
+        window.SpeakSmartScriptRegistry.pronunciation = null;
+        window.SpeakSmartScriptRegistry.currentScript = null;
+      }
+      window.SPEAKSMART_READING_LOADED = false;
+      window.SPEAKSMART_GRAMMAR_LOADED = false;
+
+      console.log(`[BOOTSTRAP-CLEANUP] Comprehensive cleanup completed, removed ${totalCleaned} elements`);
+      return totalCleaned;
+    }
+  };
+
+  // === [ANCHOR: COMPREHENSIVE SCRIPT LOADING INTERCEPTION] ===
+  window.__SS_PENDING_SCRIPT = null;
+  window.__SS_SCRIPT_DETECTION_ATTEMPTS = 0;
+  window.__SS_MAX_DETECTION_ATTEMPTS = 10;
+
+  // Enhanced script creation interception
+  const originalCreateElement = document.createElement;
+  document.createElement = function(tagName, options) {
+    const element = originalCreateElement.call(document, tagName, options);
+
+    if (tagName.toLowerCase() === 'script' && element.src) {
+      const src = element.src.toLowerCase();
+      if (src.includes('speaksmart-reading-gpt.js') ||
+          src.includes('speaksmart-grammar-gpt.js') ||
+          src.includes('speaksmart-pron-gpt.js')) {
+
+        console.log('🔍 BOOTSTRAP: Detected script creation:', src);
+        window.__SS_PENDING_SCRIPT = src;
+        setScriptDetectionTimeout(src);
+      }
+    }
+
+    return element;
+  };
+
+  // Enhanced appendChild interception
+  const originalAppendChild = Element.prototype.appendChild;
+  Element.prototype.appendChild = function(child) {
+    if (child.tagName && child.tagName.toLowerCase() === 'script' && child.src) {
+      const src = child.src.toLowerCase();
+      if (src.includes('speaksmart-reading-gpt.js') ||
+          src.includes('speaksmart-grammar-gpt.js') ||
+          src.includes('speaksmart-pron-gpt.js')) {
+
+        console.log('🔍 BOOTSTRAP: Detected script append:', src);
+        window.__SS_PENDING_SCRIPT = src;
+        setScriptDetectionTimeout(src);
+      }
+    }
+
+    return originalAppendChild.call(this, child);
+  };
+
+  // Enhanced insertBefore interception
+  const originalInsertBefore = Element.prototype.insertBefore;
+  Element.prototype.insertBefore = function(newNode, referenceNode) {
+    if (newNode.tagName && newNode.tagName.toLowerCase() === 'script' && newNode.src) {
+      const src = newNode.src.toLowerCase();
+      if (src.includes('speaksmart-reading-gpt.js') ||
+          src.includes('speaksmart-grammar-gpt.js') ||
+          src.includes('speaksmart-pron-gpt.js')) {
+
+        console.log('🔍 BOOTSTRAP: Detected script insertBefore:', src);
+        window.__SS_PENDING_SCRIPT = src;
+        setScriptDetectionTimeout(src);
+      }
+    }
+
+    return originalInsertBefore.call(this, newNode, referenceNode);
+  };
+
+  // Monitor for script loading via MutationObserver
+  if (typeof MutationObserver !== 'undefined') {
+    const scriptObserver = new MutationObserver(function(mutations) {
+      mutations.forEach(function(mutation) {
+        mutation.addedNodes.forEach(function(node) {
+          if (node.tagName && node.tagName.toLowerCase() === 'script' && node.src) {
+            const src = node.src.toLowerCase();
+            if (src.includes('speaksmart-reading-gpt.js') ||
+                src.includes('speaksmart-grammar-gpt.js') ||
+                src.includes('speaksmart-pron-gpt.js')) {
+
+              console.log('🔍 BOOTSTRAP: Detected script via MutationObserver:', src);
+              window.__SS_PENDING_SCRIPT = src;
+              setScriptDetectionTimeout(src);
+            }
+          }
+        });
+      });
+    });
+
+    scriptObserver.observe(document.head, { childList: true, subtree: true });
+  }
+
+  // Fallback: Monitor for script loading indicators every 100ms
+  setInterval(function() {
+    if (window.__SS_PENDING_SCRIPT) return; // Already detected
+
+    const scripts = document.querySelectorAll('script[src]');
+    for (let script of scripts) {
+      const src = script.src.toLowerCase();
+      if (src.includes('speaksmart-reading-gpt.js') ||
+          src.includes('speaksmart-grammar-gpt.js') ||
+          src.includes('speaksmart-pron-gpt.js')) {
+
+        if (script !== window.__SS_LAST_DETECTED_SCRIPT) {
+          console.log('🔍 BOOTSTRAP: Detected script via polling:', src);
+          window.__SS_PENDING_SCRIPT = src;
+          window.__SS_LAST_DETECTED_SCRIPT = script;
+          setScriptDetectionTimeout(src);
+          break;
+        }
+      }
+    }
+  }, 100);
+
+  function setScriptDetectionTimeout(scriptSrc) {
+    // Set a timeout to handle the script after a brief delay
+    setTimeout(() => {
+      handleDetectedScript(scriptSrc);
+    }, 100);
+  }
+
+  function handleDetectedScript(scriptSrc) {
+    console.log('🚨 BOOTSTRAP: Handling detected script:', scriptSrc);
+
+    // Perform extended cleanup
+    performExtendedCleanupForScriptLoading(
+      scriptSrc.includes('grammar') ? 'grammar' :
+      scriptSrc.includes('reading') ? 'reading' : 'pronunciation'
+    );
+
+    // Wait for cleanup to complete, then trigger detection
+    setTimeout(() => {
+      window.detectAndInitializeSpeakSmartScript();
+    }, 500);
+  }
+
+  // === [ANCHOR: CONTEXT-BASED SCRIPT TYPE DETECTION] ===
+  function detectScriptTypeFromContext() {
+    // Check if we can infer from pronunciationConfig
+    if (window.pronunciationConfig && window.pronunciationConfig.expectedPhrase) {
+      const phrase = window.pronunciationConfig.expectedPhrase.toLowerCase();
+
+      // Grammar phrases often contain grammar-specific words
+      if (phrase.includes('they are') || phrase.includes('it is') || phrase.includes('this is')) {
+        return 'grammar';
+      }
+
+      // Reading phrases are often longer sentences for pronunciation practice
+      if (phrase.length > 20) {
+        return 'reading';
+      }
+
+      // Default to pronunciation for shorter phrases
+      return 'pronunciation';
+    }
+
+    // Check for existing function availability
+    if (typeof window.initWheelGrammarChecker === 'function') {
+      return 'grammar';
+    }
+    if (typeof window.initWheelReadingChecker === 'function') {
+      return 'reading';
+    }
+
+    return 'pronunciation'; // Default
+  }
+
+  // === [ANCHOR: ENHANCED SCRIPT LOADING] ===
+  // REMOVED: Body-wide marking was over-marking everything
+  // Elements will be marked at creation time by individual scripts
+
   // Brain animation state
   var brainState = {
     animationId: null,
@@ -102,6 +349,11 @@
   }
   function ssFetchManifestViaScript() {
     return new Promise(function (resolve, reject) {
+      // Run comprehensive cleanup before loading any script
+      if (window.SpeakSmartElementMarker && window.SpeakSmartElementMarker.comprehensivePreScriptCleanup) {
+        window.SpeakSmartElementMarker.comprehensivePreScriptCleanup();
+      }
+
       var script = document.createElement('script');
       var done = false;
       function cleanup() {
@@ -416,6 +668,10 @@
           var t = brainState.phases[p];
           var idx = Math.floor(lerp(0, pts.length-1, t));
           var a = pts[idx], b = pts[(idx+1) % pts.length];
+          // Guard against undefined points
+          if (!a || !b || a.x === undefined || a.y === undefined || b.x === undefined || b.y === undefined) {
+            continue;
+          }
           var dx = b.x - a.x, dy = b.y - a.y;
           var px = a.x + dx * (t % 1), py = a.y + dy * (t % 1);
           ctx.beginPath();
@@ -547,7 +803,7 @@
       if (
         message.includes('External script loaded successfully') ||
         message.includes('Pronunciation checker initialized') ||
-        message.includes('Loading animation hidden')
+        (message.includes('Loading animation hidden') && !window.__SS_EXTENDED_LOADING)
       ) {
         suppressAndCleanup();
         return;
@@ -621,8 +877,16 @@
     try { brainState.primaryObserver && brainState.primaryObserver.disconnect(); } catch(e){}
     try { secondaryObserver && secondaryObserver.disconnect && secondaryObserver.disconnect(); } catch(e){}
 
-    // Stop backup interval + remove overlay/RAF
+    // Stop backup interval + remove overlay/RAF + cleanup marked elements
     cleanup();
+
+    // === [ANCHOR: ENHANCED SUPPRESSION CLEANUP] ===
+    // Additional cleanup of SpeakSmart elements when suppressing
+    // Use type-specific cleanup if we know the active script
+    if (window.SpeakSmartElementMarker) {
+      const suppressionCleanup = window.SpeakSmartElementMarker.cleanupMarkedElements(window.__SS_ACTIVE_SCRIPT);
+      console.log(`[SUPPRESSION-CLEANUP] Removed ${suppressionCleanup} SpeakSmart marked elements during suppression`);
+    }
 
     // Restore console
     if (brainState.originalConsoleLog) {
@@ -633,9 +897,9 @@
 
   function cleanup() {
     console.log('Cleaning up brain animation');
-    
+
     stopBackupMonitoring();
-    
+
     if (brainState.animationId) {
       cancelAnimationFrame(brainState.animationId);
       brainState.animationId = null;
@@ -645,6 +909,14 @@
     }
     brainState.overlay = null;
     brainState.canvas = null;
+
+    // === [ANCHOR: ENHANCED CLEANUP WITH MARKER SYSTEM] ===
+    // Clean up SpeakSmart marked elements as part of bootstrap cleanup
+    // Use type-specific cleanup if we know the active script
+    if (window.SpeakSmartElementMarker) {
+      const markedCleanup = window.SpeakSmartElementMarker.cleanupMarkedElements(window.__SS_ACTIVE_SCRIPT);
+      console.log(`[BOOTSTRAP-CLEANUP] Removed ${markedCleanup} SpeakSmart marked elements`);
+    }
   }
 
   // Kick everything off (DOMContentLoaded guards included)
@@ -670,4 +942,220 @@
 
   // Initialize the robust system
   console.log('SpeakSmart race-condition-proof bootstrap with marketing safety net ready');
+
+  // Restore original functions
+  document.createElement = originalCreateElement;
+  Element.prototype.appendChild = originalAppendChild;
+
+  console.log('✅ BOOTSTRAP: Script loading interception installed');
+
+  // ========================================================
+  // SMART SCRIPT DETECTION & ROUTING
+  // ========================================================
+  // Detects which SpeakSmart script is loaded and calls the correct init function
+  window.detectAndInitializeSpeakSmartScript = function() {
+    console.log('🔍 BOOTSTRAP: Starting strict script detection...');
+
+    // First priority: Check for pending script from interception
+    if (window.__SS_PENDING_SCRIPT) {
+      const pendingScript = window.__SS_PENDING_SCRIPT;
+      console.log('📄 BOOTSTRAP: Using pending script:', pendingScript);
+      window.__SS_PENDING_SCRIPT = null;
+
+      // Determine script type
+      const scriptType = pendingScript.includes('grammar') ? 'grammar' :
+                         pendingScript.includes('reading') ? 'reading' : 'pronunciation';
+
+      // Wait for script to load and define its init function
+      waitForInitFunction(scriptType, 0);
+      return;
+    }
+
+    // Second priority: Context-based detection
+    const contextScriptType = detectScriptTypeFromContext();
+    console.log('🔍 BOOTSTRAP: Context suggests script type:', contextScriptType);
+
+    // Wait for script to load
+    waitForInitFunction(contextScriptType, 0);
+  };
+
+  function waitForInitFunction(scriptType, attempt) {
+    const maxAttempts = 80; // 80 attempts × 100ms = 8 seconds (3 second cleanup + 5 second retry)
+    const retryDelay = 100; // 100ms between attempts
+
+    console.log(`🔍 BOOTSTRAP: Waiting for ${scriptType} init function (attempt ${attempt + 1}/${maxAttempts})...`);
+
+    const initFunctions = {
+      'grammar': 'initWheelGrammarChecker',
+      'reading': 'initWheelReadingChecker',
+      'pronunciation': '_originalInitWheelPronunciationChecker'
+    };
+
+    const initFunctionName = initFunctions[scriptType];
+    const initFunction = window[initFunctionName];
+
+    // Check if the init function exists
+    if (typeof initFunction === 'function') {
+      console.log(`✅ BOOTSTRAP: Found ${scriptType} init function after ${attempt + 1} attempts, calling it now`);
+
+      // Set marker type
+      if (window.SpeakSmartElementMarker) {
+        window.SpeakSmartElementMarker.setType(scriptType);
+        window.__SS_ACTIVE_SCRIPT = scriptType;
+      }
+
+      // Call the init function
+      initFunction();
+      return;
+    }
+
+    // If not found and we have attempts left
+    if (attempt < maxAttempts - 1) {
+      setTimeout(() => {
+        waitForInitFunction(scriptType, attempt + 1);
+      }, retryDelay);
+      return;
+    }
+
+    // Final failure - show error message
+    console.error(`❌ BOOTSTRAP: ${scriptType} init function not found after ${maxAttempts} attempts (${maxAttempts * retryDelay}ms)`);
+    showErrorMessage(`${scriptType.charAt(0).toUpperCase() + scriptType.slice(1)} script not found - please refresh and try again`);
+  }
+
+  // Store the original initWheelPronunciationChecker if it exists (for pronunciation-only scripts)
+  if (window.initWheelPronunciationChecker && !window._originalInitWheelPronunciationChecker) {
+    window._originalInitWheelPronunciationChecker = window.initWheelPronunciationChecker;
+  }
+
+  // Override the generic initWheelPronunciationChecker to use smart routing
+  window.initWheelPronunciationChecker = function() {
+    console.log('🔀 BOOTSTRAP: Generic init called - routing to correct script...');
+    window.detectAndInitializeSpeakSmartScript();
+  };
+
+  // === [ANCHOR: ERROR MESSAGE FUNCTION] ===
+  function showErrorMessage(message) {
+    // Hide any existing animations
+    if (brainState.overlay && brainState.overlay.parentNode) {
+      brainState.overlay.parentNode.removeChild(brainState.overlay);
+    }
+
+    // Create error overlay
+    const errorDiv = document.createElement('div');
+    errorDiv.style.cssText = `
+      position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+      background: rgba(220, 53, 69, 0.95); color: white; padding: 30px;
+      border-radius: 15px; font-size: 18px; text-align: center;
+      z-index: 10000; max-width: 500px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+    `;
+    errorDiv.innerHTML = `
+      <div style="margin-bottom: 20px;">🚨</div>
+      <strong>SpeakSmart Error</strong><br><br>
+      ${message}<br><br>
+      <button onclick="location.reload()" style="
+        background: #007bff; color: white; border: none;
+        padding: 10px 20px; border-radius: 5px; cursor: pointer;
+        font-size: 16px;
+      ">
+        🔄 Refresh Page
+      </button>
+    `;
+
+    document.body.appendChild(errorDiv);
+    console.log('🚨 BOOTSTRAP: Error message displayed to user');
+  }
+
+  // === [ANCHOR: EXTENDED CLEANUP FUNCTION] ===
+  function performExtendedCleanupForScriptLoading(scriptType) {
+    console.log('🧹 BOOTSTRAP: Performing extended cleanup for', scriptType);
+
+    // Show/extend loader animation for cleanup duration
+    if (!brainState.overlay || !brainState.overlay.parentNode) {
+      showMarketingBrainAnimation();
+    }
+
+    // Set extended loading flag
+    window.__SS_EXTENDED_LOADING = true;
+
+    // Set a timeout to end extended loading (3 seconds)
+    setTimeout(() => {
+      window.__SS_EXTENDED_LOADING = false;
+      console.log('⏰ BOOTSTRAP: Extended loading period ended');
+    }, 3000);
+
+    let cleanupCount = 0;
+
+    // Remove all SpeakSmart marked elements
+    if (window.SpeakSmartElementMarker) {
+      cleanupCount += window.SpeakSmartElementMarker.cleanupMarkedElements();
+    }
+
+    // Remove OLD script tags (but NOT the one currently loading)
+    ['speaksmart-reading-gpt.js', 'speaksmart-grammar-gpt.js', 'speaksmart-pron-gpt.js'].forEach(scriptName => {
+      document.querySelectorAll(`script[src*="${scriptName}"]`).forEach(script => {
+        // Don't remove the script that's currently trying to load!
+        const scriptSrc = script.src.toLowerCase();
+        if (window.__SS_PENDING_SCRIPT && scriptSrc.includes(scriptName.toLowerCase())) {
+          const pendingSrc = window.__SS_PENDING_SCRIPT.toLowerCase();
+          if (scriptSrc.includes(pendingSrc.split('?')[0].split('/').pop())) {
+            console.log('💾 BOOTSTRAP: Preserving currently loading script:', script.src);
+            return; // Skip this one
+          }
+        }
+        
+        if (script.parentNode) {
+          script.parentNode.removeChild(script);
+          cleanupCount++;
+          console.log('🗑️ BOOTSTRAP: Removed old script:', script.src);
+        }
+      });
+    });
+
+    // Remove known UI elements (including wrapper's reusable mic elements)
+    const elementsToRemove = [
+      'reading-container', 
+      'grammar-container', 
+      'circularPrompt', 
+      'expected-phrase-bubble',
+      'micContainer'  // ← Force removal so each script creates fresh mic elements
+    ];
+    
+    elementsToRemove.forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.parentNode) {
+        el.parentNode.removeChild(el);
+        cleanupCount++;
+        console.log('🗑️ BOOTSTRAP: Removed element:', id);
+      }
+    });
+
+    // DELETE ALL OLD INIT FUNCTIONS (they'll be recreated when new script loads)
+    const initFunctionsToDelete = [
+      'initWheelReadingChecker',
+      'initWheelGrammarChecker', 
+      '_originalInitWheelPronunciationChecker'
+    ];
+    
+    initFunctionsToDelete.forEach(funcName => {
+      if (window[funcName]) {
+        delete window[funcName];
+        cleanupCount++;
+        console.log('🗑️ BOOTSTRAP: Deleted old init function:', funcName);
+      }
+    });
+
+    // Clear OLD global state flags
+    ['SPEAKSMART_READING_LOADED', 'SPEAKSMART_GRAMMAR_LOADED', 'SPEAKSMART_PRON_LOADED'].forEach(varName => {
+      if (window[varName]) {
+        delete window[varName];
+      }
+    });
+
+    // PRESERVE pronunciationConfig - wrapper just set it fresh for the new script
+    console.log('💾 BOOTSTRAP: Preserved fresh pronunciationConfig:', window.pronunciationConfig?.expectedPhrase);
+
+    console.log(`🧹 BOOTSTRAP: Cleanup completed - removed ${cleanupCount} items`);
+  }
+
+  console.log('✅ BOOTSTRAP: Smart script detection and routing installed');
 })();
