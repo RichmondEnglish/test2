@@ -976,7 +976,7 @@
     };
   
     function waitForInitFunction(scriptType, attempt) {
-      const maxAttempts = 50; // 50 attempts = 5 seconds
+      const maxAttempts = 80; // 80 attempts × 100ms = 8 seconds (3 second cleanup + 5 second retry)
       const retryDelay = 100; // 100ms between attempts
   
       console.log(`🔍 BOOTSTRAP: Waiting for ${scriptType} init function (attempt ${attempt + 1}/${maxAttempts})...`);
@@ -1073,11 +1073,11 @@
       // Set extended loading flag
       window.__SS_EXTENDED_LOADING = true;
   
-      // Set a timeout to end extended loading
+      // Set a timeout to end extended loading (3 seconds)
       setTimeout(() => {
         window.__SS_EXTENDED_LOADING = false;
         console.log('⏰ BOOTSTRAP: Extended loading period ended');
-      }, 3000); // 3 second extension
+      }, 3000);
   
       let cleanupCount = 0;
   
@@ -1086,17 +1086,21 @@
         cleanupCount += window.SpeakSmartElementMarker.cleanupMarkedElements();
       }
   
-      // Remove script tags
+      // Remove OLD script tags (but not the one that just loaded)
       ['speaksmart-reading-gpt.js', 'speaksmart-grammar-gpt.js', 'speaksmart-pron-gpt.js'].forEach(scriptName => {
         document.querySelectorAll(`script[src*="${scriptName}"]`).forEach(script => {
-          if (script.parentNode) {
-            script.parentNode.removeChild(script);
-            cleanupCount++;
+          // Only remove if it's NOT the pending script
+          if (!window.__SS_PENDING_SCRIPT || !script.src.includes(window.__SS_PENDING_SCRIPT)) {
+            if (script.parentNode) {
+              script.parentNode.removeChild(script);
+              cleanupCount++;
+              console.log('🗑️ BOOTSTRAP: Removed old script:', script.src);
+            }
           }
         });
       });
   
-      // Remove known elements
+      // Remove known UI elements
       ['reading-container', 'grammar-container', 'circularPrompt', 'expected-phrase-bubble'].forEach(id => {
         const el = document.getElementById(id);
         if (el && el.parentNode) {
@@ -1105,13 +1109,16 @@
         }
       });
   
-      // Clear global state
-      ['SPEAKSMART_READING_LOADED', 'SPEAKSMART_GRAMMAR_LOADED', 'pronunciationConfig'].forEach(varName => {
+      // Clear OLD global state flags but PRESERVE pronunciationConfig
+      ['SPEAKSMART_READING_LOADED', 'SPEAKSMART_GRAMMAR_LOADED'].forEach(varName => {
         if (window[varName]) {
           window[varName] = null;
           delete window[varName];
         }
       });
+  
+      // DON'T delete pronunciationConfig - wrapper needs it!
+      console.log('💾 BOOTSTRAP: Preserved pronunciationConfig for script initialization');
   
       console.log(`🧹 BOOTSTRAP: Cleanup completed - removed ${cleanupCount} items`);
     }
