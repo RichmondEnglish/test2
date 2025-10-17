@@ -28,6 +28,7 @@
     HOST: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com',
     BASE: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/assets/',
     MANIFEST_URL: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/assets/manifest.json',
+    MANIFEST_JS_URL: 'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/assets/manifest.js',
     // If manifest/index scrape fail, we'll still warm these:
     CRITICAL_HINTS: [
       'SpeakSmart-loader.png',
@@ -94,6 +95,46 @@
         });
       });
   }
+  function ssFetchManifestViaScript() {
+    return new Promise(function (resolve, reject) {
+      var script = document.createElement('script');
+      var done = false;
+      function cleanup() {
+        try { if (script && script.parentNode) script.parentNode.removeChild(script); } catch (e) {}
+        try { delete window.SPEAKSMART_ASSETS; } catch (e) {}
+        try { delete window.SpeakSmartAssets; } catch (e) {}
+      }
+      script.async = true;
+      script.src = assetPreloadState.MANIFEST_JS_URL + '?cb=' + Date.now();
+      script.onload = function () {
+        if (done) return;
+        done = true;
+        try {
+          var arr = window.SPEAKSMART_ASSETS || window.SpeakSmartAssets;
+          if (Array.isArray(arr) && arr.length) {
+            var list = arr.filter(ssIsImageFile).map(function (name) {
+              return assetPreloadState.BASE + String(name).replace(/^\//, '');
+            });
+            cleanup();
+            resolve(list);
+            return;
+          }
+          cleanup();
+          reject(new Error('manifest.js loaded but no usable array found'));
+        } catch (err) {
+          cleanup();
+          reject(err);
+        }
+      };
+      script.onerror = function () {
+        if (done) return;
+        done = true;
+        cleanup();
+        reject(new Error('manifest.js failed to load'));
+      };
+      (document.head || document.documentElement).appendChild(script);
+    });
+  }
   function ssScrapeDirectoryIndex() {
     return fetch(assetPreloadState.BASE, { mode: 'cors' })
       .then(function(r){ if (!r.ok) throw new Error('no index'); return r.text(); })
@@ -153,6 +194,7 @@
     }
 
     ssFetchManifestList()
+      .catch(function(){ return ssFetchManifestViaScript(); })
       .catch(function(){ return ssScrapeDirectoryIndex(); })
       .catch(function(){ return ssFallbackList(); })
       .then(function(list){
