@@ -786,17 +786,20 @@
     // Detects which SpeakSmart script is loaded and calls the correct init function
     window.detectAndInitializeSpeakSmartScript = function() {
       console.log('🔍 BOOTSTRAP: Detecting which SpeakSmart script is loaded...');
-      
+  
       // Get all loaded script sources (check for both new and legacy filenames)
       const scripts = Array.from(document.querySelectorAll('script[src]'));
-      const loadedScript = scripts.find(s => 
-        s.src.includes('speaksmart-reading-gpt') || 
-        s.src.includes('speaksmart-grammar-gpt') ||
-        s.src.includes('speaksmart-pron-gpt') ||
-        s.src.includes('pronunciation-checker.js') ||       // Legacy reading
-        s.src.includes('simple-pron-checker-notext.js') ||  // Legacy grammar
-        s.src.includes('simple-pron-checker.js')            // Legacy pronunciation
-      );
+  
+      // Use exact filename matching instead of includes() to avoid false matches
+      const loadedScript = scripts.find(s => {
+        const url = s.src.toLowerCase();
+        return url.includes('speaksmart-reading-gpt.js') ||
+               url.includes('speaksmart-grammar-gpt.js') ||
+               url.includes('speaksmart-pron-gpt.js') ||
+               url.includes('pronunciation-checker.js') ||       // Legacy reading
+               url.includes('simple-pron-checker-notext.js') ||  // Legacy grammar
+               url.includes('simple-pron-checker.js');            // Legacy pronunciation
+      });
       
       if (!loadedScript) {
         console.warn('⚠️ BOOTSTRAP: No SpeakSmart script detected in DOM yet');
