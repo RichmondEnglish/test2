@@ -817,5 +817,95 @@
   
     // Initialize the robust system
     console.log('SpeakSmart race-condition-proof bootstrap with marketing safety net ready');
+  
+    // ========================================================
+    // SMART SCRIPT DETECTION & ROUTING
+    // ========================================================
+    // Detects which SpeakSmart script is loaded and calls the correct init function
+    window.detectAndInitializeSpeakSmartScript = function() {
+      console.log('🔍 BOOTSTRAP: Detecting which SpeakSmart script is loaded...');
+      
+      // Get all loaded script sources
+      const scripts = Array.from(document.querySelectorAll('script[src]'));
+      const loadedScript = scripts.find(s => 
+        s.src.includes('speaksmart-reading-gpt') || 
+        s.src.includes('speaksmart-grammar-gpt') ||
+        s.src.includes('speaksmart-pronunciation-gpt')
+      );
+      
+      if (!loadedScript) {
+        console.warn('⚠️ BOOTSTRAP: No SpeakSmart script detected in DOM yet');
+        
+        // Try to detect from window functions that exist
+        if (typeof window.initWheelGrammarChecker === 'function') {
+          console.log('✅ BOOTSTRAP: Found initWheelGrammarChecker - calling it');
+          window.initWheelGrammarChecker();
+          return;
+        }
+        if (typeof window.initWheelReadingChecker === 'function') {
+          console.log('✅ BOOTSTRAP: Found initWheelReadingChecker - calling it');
+          window.initWheelReadingChecker();
+          return;
+        }
+        
+        console.warn('⚠️ BOOTSTRAP: No script-specific init functions found, deferring...');
+        return;
+      }
+      
+      const scriptUrl = loadedScript.src;
+      console.log('📄 BOOTSTRAP: Detected script URL:', scriptUrl);
+      
+      // Route to the correct initialization function based on URL
+      if (scriptUrl.includes('grammar')) {
+        console.log('✅ BOOTSTRAP: Detected GRAMMAR script - calling initWheelGrammarChecker()');
+        if (typeof window.initWheelGrammarChecker === 'function') {
+          window.initWheelGrammarChecker();
+        } else {
+          console.error('❌ BOOTSTRAP: initWheelGrammarChecker not found!');
+        }
+      } 
+      else if (scriptUrl.includes('reading')) {
+        console.log('✅ BOOTSTRAP: Detected READING script - calling initWheelReadingChecker()');
+        if (typeof window.initWheelReadingChecker === 'function') {
+          window.initWheelReadingChecker();
+        } else {
+          console.error('❌ BOOTSTRAP: initWheelReadingChecker not found!');
+        }
+      }
+      else if (scriptUrl.includes('pronunciation')) {
+        console.log('✅ BOOTSTRAP: Detected PRONUNCIATION script - calling native initWheelPronunciationChecker()');
+        // For pronunciation script, we need to call the real init, not this router
+        // Store reference to the real function if it exists
+        if (window._originalInitWheelPronunciationChecker) {
+          window._originalInitWheelPronunciationChecker();
+        } else {
+          console.error('❌ BOOTSTRAP: Original pronunciation checker not found!');
+        }
+      }
+      else {
+        console.warn('⚠️ BOOTSTRAP: Unknown script type in URL:', scriptUrl);
+        // Try function detection fallback
+        if (typeof window.initWheelGrammarChecker === 'function') {
+          console.log('🔄 BOOTSTRAP: Fallback - calling initWheelGrammarChecker');
+          window.initWheelGrammarChecker();
+        } else if (typeof window.initWheelReadingChecker === 'function') {
+          console.log('🔄 BOOTSTRAP: Fallback - calling initWheelReadingChecker');
+          window.initWheelReadingChecker();
+        }
+      }
+    };
+  
+    // Store the original initWheelPronunciationChecker if it exists (for pronunciation-only scripts)
+    if (window.initWheelPronunciationChecker && !window._originalInitWheelPronunciationChecker) {
+      window._originalInitWheelPronunciationChecker = window.initWheelPronunciationChecker;
+    }
+  
+    // Override the generic initWheelPronunciationChecker to use smart routing
+    window.initWheelPronunciationChecker = function() {
+      console.log('🔀 BOOTSTRAP: Generic init called - routing to correct script...');
+      window.detectAndInitializeSpeakSmartScript();
+    };
+  
+    console.log('✅ BOOTSTRAP: Smart script detection and routing installed');
   })();
   
