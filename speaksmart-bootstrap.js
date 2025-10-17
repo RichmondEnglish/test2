@@ -1086,23 +1086,42 @@
         cleanupCount += window.SpeakSmartElementMarker.cleanupMarkedElements();
       }
   
-      // Remove ALL old script tags
+      // Remove OLD script tags (but NOT the one currently loading)
       ['speaksmart-reading-gpt.js', 'speaksmart-grammar-gpt.js', 'speaksmart-pron-gpt.js'].forEach(scriptName => {
         document.querySelectorAll(`script[src*="${scriptName}"]`).forEach(script => {
+          // Don't remove the script that's currently trying to load!
+          const scriptSrc = script.src.toLowerCase();
+          if (window.__SS_PENDING_SCRIPT && scriptSrc.includes(scriptName.toLowerCase())) {
+            const pendingSrc = window.__SS_PENDING_SCRIPT.toLowerCase();
+            if (scriptSrc.includes(pendingSrc.split('?')[0].split('/').pop())) {
+              console.log('💾 BOOTSTRAP: Preserving currently loading script:', script.src);
+              return; // Skip this one
+            }
+          }
+          
           if (script.parentNode) {
             script.parentNode.removeChild(script);
             cleanupCount++;
-            console.log('🗑️ BOOTSTRAP: Removed script:', script.src);
+            console.log('🗑️ BOOTSTRAP: Removed old script:', script.src);
           }
         });
       });
   
-      // Remove known UI elements
-      ['reading-container', 'grammar-container', 'circularPrompt', 'expected-phrase-bubble'].forEach(id => {
+      // Remove known UI elements (including wrapper's reusable mic elements)
+      const elementsToRemove = [
+        'reading-container', 
+        'grammar-container', 
+        'circularPrompt', 
+        'expected-phrase-bubble',
+        'micContainer'  // ← Force removal so each script creates fresh mic elements
+      ];
+      
+      elementsToRemove.forEach(id => {
         const el = document.getElementById(id);
         if (el && el.parentNode) {
           el.parentNode.removeChild(el);
           cleanupCount++;
+          console.log('🗑️ BOOTSTRAP: Removed element:', id);
         }
       });
   
