@@ -410,45 +410,79 @@
    *  INSTANT REPLACEMENT STRATEGY: No delays, immediate swap
    * -------------------------------------------------------------------- */
   function instantReplacement(grayCircle) {
-    console.log('Attempting INSTANT replacement of gray circle');
+    // Non-destructive injection: if Captivate created the overlay, insert our
+    // neuron canvas/logo into it rather than replacing the node.
+    if (!grayCircle || !grayCircle.parentNode) return false;
 
-    // Quick validation
-    if (!grayCircle || !grayCircle.parentNode) {
-      console.log('Gray circle already gone, instant replacement aborted');
-      return false;
-    }
-
-    // Skip if it's our own overlay
-    if (grayCircle.className && grayCircle.className.includes('speaksmart-brain-overlay')) {
-      console.log('Ignoring our own brain overlay');
-      return false;
-    }
+    // If we've already injected into this overlay, nothing to do
+    try {
+      if (grayCircle.querySelector && grayCircle.querySelector('.speaksmart-inset')) {
+        return true;
+      }
+    } catch (e) { /* ignore */ }
 
     try {
-      // Use pre-built overlay for instant swap
-      var brainOverlay = brainState.prebuiltOverlay;
-      if (!brainOverlay) {
-        brainOverlay = buildBrainOverlay();
-      }
+      // Create an inset container that sits inside the existing overlay
+      var inset = document.createElement('div');
+      inset.className = 'speaksmart-inset';
+      inset.style.position = 'absolute';
+      inset.style.left = '50%';
+      inset.style.top = '50%';
+      inset.style.transform = 'translate(-50%, -50%)';
+      inset.style.width = '480px';
+      inset.style.height = '360px';
+      inset.style.pointerEvents = 'none';
+      inset.style.display = 'flex';
+      inset.style.justifyContent = 'center';
+      inset.style.alignItems = 'center';
 
-      // INSTANT replacement - no setTimeout
-      grayCircle.parentNode.replaceChild(brainOverlay, grayCircle);
-      
-      brainState.overlay = brainOverlay;
-      startBrainAnimation(brainState.canvas);
-      
-      console.log('INSTANT brain replacement successful!');
-      
-      // Pre-build next overlay for subsequent attempts
-      setTimeout(function() {
-        if (!brainState.prebuiltOverlay || brainState.prebuiltOverlay === brainOverlay) {
-          buildBrainOverlay();
+      // Clone the loader background image if present in prebuiltOverlay
+      var inner = document.createElement('div');
+      inner.style.position = 'relative';
+      inner.style.width = '100%';
+      inner.style.height = '100%';
+      inner.style.background = 'transparent';
+
+      var img = document.createElement('img');
+      img.style.width = '100%';
+      img.style.display = 'block';
+      try {
+        img.src = (brainState.prebuiltOverlay && brainState.prebuiltOverlay.querySelector('img') && brainState.prebuiltOverlay.querySelector('img').src) || 'SpeakSmart-loader.png';
+      } catch (e) { img.src = 'SpeakSmart-loader.png'; }
+      img.onerror = function() { /* ignore image errors */ };
+      inner.appendChild(img);
+
+      var canvas = document.createElement('canvas');
+      canvas.width = 200;
+      canvas.height = 230;
+      canvas.style.position = 'absolute';
+      canvas.style.left = '50%';
+      canvas.style.top = '35px';
+      canvas.style.marginLeft = '-100px';
+      canvas.style.pointerEvents = 'none';
+      inner.appendChild(canvas);
+
+      inset.appendChild(inner);
+
+      // Ensure parent is positioned so absolute inset centers properly
+      try {
+        var cs = window.getComputedStyle(grayCircle);
+        if (cs.position === 'static' || !cs.position) {
+          grayCircle.style.position = 'relative';
         }
-      }, 100);
-      
+      } catch (e) {}
+
+      grayCircle.appendChild(inset);
+
+      // Record inset and stop handle so cleanup can remove it
+  brainState.injectedInset = inset;
+  brainState.injectedStop = startBrainAnimationInstance(canvas);
+  // Treat the injected inset as our active overlay to prevent top-level
+  // marketing overlay from being created by the console log hook.
+  brainState.overlay = inset;
+
       return true;
-    } catch (error) {
-      console.log('Instant replacement failed:', error.message);
+    } catch (err) {
       return false;
     }
   }
@@ -460,6 +494,12 @@
     // Only if we don't already have a brain overlay active
     if (brainState.overlay && brainState.overlay.parentNode) {
       console.log('Brain animation already active, skipping marketing trigger');
+      return;
+    }
+
+    // If we've injected an inset into Captivate overlays, don't add another top-level overlay
+    if (document.querySelector && document.querySelector('.speaksmart-inset')) {
+      console.log('Detected existing speaksmart inset - skipping top-level marketing overlay');
       return;
     }
 
@@ -561,8 +601,13 @@
         if (node.nodeType !== 1) return;
         
         if (node.id === 'pronunciation-loading-overlay') {
+          // If it was our top-level overlay, clean up
           if (node === brainState.overlay) {
             console.log('Brain overlay removed - cleaning up');
+            cleanup();
+          } else if (node.querySelector && node.querySelector('.speaksmart-inset')) {
+            // Captivate removed an overlay that contains our injected inset -> cleanup
+            console.log('Removed node contains speaksmart inset - cleaning up injected animation');
             cleanup();
           } else {
             console.log('Gray circle removed - preparing for next attempt');
@@ -595,33 +640,50 @@
 
   function cleanup() {
     console.log('Cleaning up brain animation');
-    
+
     stopBackupMonitoring();
-    
-    if (brainState.animationId) {
-      cancelAnimationFrame(brainState.animationId);
-    }
-    
-    if (brainState.overlay && brainState.overlay.parentNode) {
-      brainState.overlay.parentNode.removeChild(brainState.overlay);
-    }
+
+    // Stop main animation if running
+    try {
+      if (brainState.animationId) cancelAnimationFrame(brainState.animationId);
+    } catch (e) {}
+
+    // Remove overlay if we created a top-level one
+    try {
+      if (brainState.overlay && brainState.overlay.parentNode) {
+        brainState.overlay.parentNode.removeChild(brainState.overlay);
+      }
+    } catch (e) {}
+
+    // Remove any injected inset we appended into Captivate overlays
+    try {
+      if (brainState.injectedStop) {
+        try { brainState.injectedStop(); } catch (e) {}
+        brainState.injectedStop = null;
+      }
+      if (brainState.injectedInset && brainState.injectedInset.parentNode) {
+        brainState.injectedInset.parentNode.removeChild(brainState.injectedInset);
+      }
+    } catch (e) {}
 
     // Reset state but keep prebuilt overlay for next attempt
     brainState.animationId = null;
     brainState.canvas = null;
     brainState.overlay = null;
+    brainState.injectedInset = null;
+    brainState.injectedStop = null;
     brainState.paths = [];
     brainState.phases = [];
     brainState.speeds = [];
     brainState.widths = [];
     brainState.lastFlash = -Infinity;
     brainState.flickIdx = null;
-    
+
     // Rebuild overlay for next attempt
     setTimeout(function() {
-      buildBrainOverlay();
+      try { buildBrainOverlay(); } catch (e) {}
     }, 200);
-    
+
     console.log('Cleanup complete - ready for next attempt');
   }
 
