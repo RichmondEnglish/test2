@@ -958,35 +958,12 @@
         console.log('📄 BOOTSTRAP: Using pending script:', pendingScript);
         window.__SS_PENDING_SCRIPT = null;
   
-        if (pendingScript.includes('grammar')) {
-          console.log('✅ BOOTSTRAP: Detected GRAMMAR script - calling initWheelGrammarChecker()');
-          if (typeof window.initWheelGrammarChecker === 'function') {
-            window.initWheelGrammarChecker();
-          } else {
-            console.error('❌ BOOTSTRAP: initWheelGrammarChecker not found!');
-            showErrorMessage('Grammar script not found - please refresh and try again');
-          }
-        }
-        else if (pendingScript.includes('reading')) {
-          console.log('✅ BOOTSTRAP: Detected READING script - calling initWheelReadingChecker()');
-          if (typeof window.initWheelReadingChecker === 'function') {
-            window.initWheelReadingChecker();
-          } else {
-            console.error('❌ BOOTSTRAP: initWheelReadingChecker not found!');
-            showErrorMessage('Reading script not found - please refresh and try again');
-          }
-        }
-        else if (pendingScript.includes('pron')) {
-          console.log('✅ BOOTSTRAP: Detected PRONUNCIATION script - calling original function');
-          if (window._originalInitWheelPronunciationChecker) {
-            window._originalInitWheelPronunciationChecker();
-          } else if (typeof window.initWheelPronChecker === 'function') {
-            window.initWheelPronChecker();
-          } else {
-            console.error('❌ BOOTSTRAP: Original pronunciation checker not found!');
-            showErrorMessage('Pronunciation script not found - please refresh and try again');
-          }
-        }
+        // Determine script type
+        const scriptType = pendingScript.includes('grammar') ? 'grammar' :
+                           pendingScript.includes('reading') ? 'reading' : 'pronunciation';
+  
+        // Wait for script to load and define its init function
+        waitForInitFunction(scriptType, 0);
         return;
       }
   
@@ -994,37 +971,52 @@
       const contextScriptType = detectScriptTypeFromContext();
       console.log('🔍 BOOTSTRAP: Context suggests script type:', contextScriptType);
   
-      // Try to load based on context
-      if (contextScriptType === 'grammar') {
-        console.log('✅ BOOTSTRAP: Context suggests GRAMMAR - calling initWheelGrammarChecker()');
-        if (typeof window.initWheelGrammarChecker === 'function') {
-          window.initWheelGrammarChecker();
-        } else {
-          console.error('❌ BOOTSTRAP: initWheelGrammarChecker not found!');
-          showErrorMessage('Grammar script not available - please refresh and try again');
-        }
-      }
-      else if (contextScriptType === 'reading') {
-        console.log('✅ BOOTSTRAP: Context suggests READING - calling initWheelReadingChecker()');
-        if (typeof window.initWheelReadingChecker === 'function') {
-          window.initWheelReadingChecker();
-        } else {
-          console.error('❌ BOOTSTRAP: initWheelReadingChecker not found!');
-          showErrorMessage('Reading script not available - please refresh and try again');
-        }
-      }
-      else {
-        console.log('✅ BOOTSTRAP: Context suggests PRONUNCIATION - calling original function');
-        if (window._originalInitWheelPronunciationChecker) {
-          window._originalInitWheelPronunciationChecker();
-        } else if (typeof window.initWheelPronChecker === 'function') {
-          window.initWheelPronChecker();
-        } else {
-          console.error('❌ BOOTSTRAP: Original pronunciation checker not found!');
-          showErrorMessage('Pronunciation script not available - please refresh and try again');
-        }
-      }
+      // Wait for script to load
+      waitForInitFunction(contextScriptType, 0);
     };
+  
+    function waitForInitFunction(scriptType, attempt) {
+      const maxAttempts = 50; // 50 attempts = 5 seconds
+      const retryDelay = 100; // 100ms between attempts
+  
+      console.log(`🔍 BOOTSTRAP: Waiting for ${scriptType} init function (attempt ${attempt + 1}/${maxAttempts})...`);
+  
+      const initFunctions = {
+        'grammar': 'initWheelGrammarChecker',
+        'reading': 'initWheelReadingChecker',
+        'pronunciation': '_originalInitWheelPronunciationChecker'
+      };
+  
+      const initFunctionName = initFunctions[scriptType];
+      const initFunction = window[initFunctionName];
+  
+      // Check if the init function exists
+      if (typeof initFunction === 'function') {
+        console.log(`✅ BOOTSTRAP: Found ${scriptType} init function after ${attempt + 1} attempts, calling it now`);
+  
+        // Set marker type
+        if (window.SpeakSmartElementMarker) {
+          window.SpeakSmartElementMarker.setType(scriptType);
+          window.__SS_ACTIVE_SCRIPT = scriptType;
+        }
+  
+        // Call the init function
+        initFunction();
+        return;
+      }
+  
+      // If not found and we have attempts left
+      if (attempt < maxAttempts - 1) {
+        setTimeout(() => {
+          waitForInitFunction(scriptType, attempt + 1);
+        }, retryDelay);
+        return;
+      }
+  
+      // Final failure - show error message
+      console.error(`❌ BOOTSTRAP: ${scriptType} init function not found after ${maxAttempts} attempts (${maxAttempts * retryDelay}ms)`);
+      showErrorMessage(`${scriptType.charAt(0).toUpperCase() + scriptType.slice(1)} script not found - please refresh and try again`);
+    }
   
     // Store the original initWheelPronunciationChecker if it exists (for pronunciation-only scripts)
     if (window.initWheelPronunciationChecker && !window._originalInitWheelPronunciationChecker) {
