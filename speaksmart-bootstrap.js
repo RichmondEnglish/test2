@@ -50,61 +50,6 @@
 
       console.log(`[SPEAKSMART-MARKER] Removed ${removedCount} marked elements`);
       return removedCount;
-    },
-
-    // Enhanced pre-script cleanup function
-    comprehensivePreScriptCleanup: function() {
-      console.log('[BOOTSTRAP-CLEANUP] Starting comprehensive cleanup before script loading');
-
-      let totalCleaned = 0;
-
-      // 1. Clean up all SpeakSmart marked elements
-      if (window.SpeakSmartElementMarker) {
-        totalCleaned += window.SpeakSmartElementMarker.cleanupMarkedElements();
-      }
-
-      // 2. Clean up any remaining script-specific elements
-      const scriptElements = [
-        'reading-container', 'reading-backdrop', 'circularPrompt', 'expected-phrase-bubble',
-        'grammar-container', 'pronunciation-container', 'feedback-popup', 'pronunciation-feedback'
-      ];
-
-      scriptElements.forEach(id => {
-        const element = document.getElementById(id);
-        if (element && element.parentNode) {
-          element.parentNode.removeChild(element);
-          totalCleaned++;
-          console.log(`[BOOTSTRAP-CLEANUP] Removed leftover element: ${id}`);
-        }
-      });
-
-      // 3. Clean up any high-z-index popups/modals
-      document.querySelectorAll('[style*="z-index"], [style*="position: fixed"]').forEach(el => {
-        const style = window.getComputedStyle(el);
-        if (style.position === 'fixed' && parseInt(style.zIndex) > 1000) {
-          if (el.parentNode && !el.hasAttribute('data-speaks-smart-element')) {
-            el.parentNode.removeChild(el);
-            totalCleaned++;
-            console.log(`[BOOTSTRAP-CLEANUP] Removed high-z-index element`);
-          }
-        }
-      });
-
-      // 4. Reset script registry completely
-      if (window.SpeakSmartScriptRegistry) {
-        window.SpeakSmartScriptRegistry.reading = null;
-        window.SpeakSmartScriptRegistry.grammar = null;
-        window.SpeakSmartScriptRegistry.pronunciation = null;
-        window.SpeakSmartScriptRegistry.currentScript = null;
-        console.log('[BOOTSTRAP-CLEANUP] Reset script registry');
-      }
-
-      // 5. Reset global script loading flags
-      window.SPEAKSMART_READING_LOADED = false;
-      window.SPEAKSMART_GRAMMAR_LOADED = false;
-
-      console.log(`[BOOTSTRAP-CLEANUP] Comprehensive cleanup completed, removed ${totalCleaned} elements`);
-      return totalCleaned;
     }
   };
 
@@ -230,11 +175,6 @@
   }
   function ssFetchManifestViaScript() {
     return new Promise(function (resolve, reject) {
-      // Run comprehensive cleanup before loading any script
-      if (window.SpeakSmartElementMarker && window.SpeakSmartElementMarker.comprehensivePreScriptCleanup) {
-        window.SpeakSmartElementMarker.comprehensivePreScriptCleanup();
-      }
-
       var script = document.createElement('script');
       var done = false;
       function cleanup() {
