@@ -1086,16 +1086,13 @@
         cleanupCount += window.SpeakSmartElementMarker.cleanupMarkedElements();
       }
   
-      // Remove OLD script tags (but not the one that just loaded)
+      // Remove ALL old script tags
       ['speaksmart-reading-gpt.js', 'speaksmart-grammar-gpt.js', 'speaksmart-pron-gpt.js'].forEach(scriptName => {
         document.querySelectorAll(`script[src*="${scriptName}"]`).forEach(script => {
-          // Only remove if it's NOT the pending script
-          if (!window.__SS_PENDING_SCRIPT || !script.src.includes(window.__SS_PENDING_SCRIPT)) {
-            if (script.parentNode) {
-              script.parentNode.removeChild(script);
-              cleanupCount++;
-              console.log('🗑️ BOOTSTRAP: Removed old script:', script.src);
-            }
+          if (script.parentNode) {
+            script.parentNode.removeChild(script);
+            cleanupCount++;
+            console.log('🗑️ BOOTSTRAP: Removed script:', script.src);
           }
         });
       });
@@ -1109,16 +1106,30 @@
         }
       });
   
-      // Clear OLD global state flags but PRESERVE pronunciationConfig
-      ['SPEAKSMART_READING_LOADED', 'SPEAKSMART_GRAMMAR_LOADED'].forEach(varName => {
+      // DELETE ALL OLD INIT FUNCTIONS (they'll be recreated when new script loads)
+      const initFunctionsToDelete = [
+        'initWheelReadingChecker',
+        'initWheelGrammarChecker', 
+        '_originalInitWheelPronunciationChecker'
+      ];
+      
+      initFunctionsToDelete.forEach(funcName => {
+        if (window[funcName]) {
+          delete window[funcName];
+          cleanupCount++;
+          console.log('🗑️ BOOTSTRAP: Deleted old init function:', funcName);
+        }
+      });
+  
+      // Clear OLD global state flags
+      ['SPEAKSMART_READING_LOADED', 'SPEAKSMART_GRAMMAR_LOADED', 'SPEAKSMART_PRON_LOADED'].forEach(varName => {
         if (window[varName]) {
-          window[varName] = null;
           delete window[varName];
         }
       });
   
-      // DON'T delete pronunciationConfig - wrapper needs it!
-      console.log('💾 BOOTSTRAP: Preserved pronunciationConfig for script initialization');
+      // PRESERVE pronunciationConfig - wrapper just set it fresh for the new script
+      console.log('💾 BOOTSTRAP: Preserved fresh pronunciationConfig:', window.pronunciationConfig?.expectedPhrase);
   
       console.log(`🧹 BOOTSTRAP: Cleanup completed - removed ${cleanupCount} items`);
     }
