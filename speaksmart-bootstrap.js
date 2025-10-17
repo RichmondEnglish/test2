@@ -273,7 +273,7 @@
 
   /* -----------------------------------------------------------------------
    *  ASSET PRELOAD & CACHE WARMING (images for bubbles, badges, etc.)
-   *  Host is different from where this bootstrap lives.
+   *  Host is different from where this bootstrap lives. 1
    * -------------------------------------------------------------------- */
 
   var assetPreloadState = {
