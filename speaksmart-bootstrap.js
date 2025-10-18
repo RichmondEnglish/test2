@@ -308,12 +308,12 @@
     var canvas = document.createElement('canvas');
     canvas.id = 'brainCanvas';
     canvas.width = 200;
-    canvas.height = 230;
+    canvas.height = 215;
     canvas.style.position = 'absolute';
     canvas.style.left = '50%';
-    canvas.style.top = '140px';
+    canvas.style.top = '125px';
     canvas.style.width = '200px';
-    canvas.style.height = '230px';
+    canvas.style.height = '215px';
     canvas.style.marginLeft = '-100px';
     canvas.style.background = 'transparent';
     
