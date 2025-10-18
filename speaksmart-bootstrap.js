@@ -1,9 +1,9 @@
-/*  SpeakSmart Race-Condition-Proof Bootstrap with Marketing Safety Net */
+/*  SpeakSmart Simple Loader Hijacker */
 (function () {
   if (window.__speakSmartPatched) return;
   window.__speakSmartPatched = true;
 
-  console.log('SpeakSmart robust bootstrap loaded');
+  console.log('SpeakSmart simple loader hijacker loaded');
 
   // Brain animation state
   var brainState = {
@@ -477,12 +477,7 @@
         widths: brainState.widths
       });
 
-      console.log('INSTANT brain replacement successful!');
-      
-      // Pre-build next overlay for subsequent attempts
-      setTimeout(function() {
-        try { buildBrainOverlay(); } catch (e) {}
-      }, 0);
+      console.log('Brain replacement successful!');
 
     } catch (e) {
       console.log('Instant replacement failed', e && e.message);
@@ -492,34 +487,16 @@
     return true;
   }
 
-  function showMarketingBrainAnimation() {
-    try {
-      var existing = document.querySelector('.speaksmart-brain-overlay');
-      if (existing) return;
-
-      var overlay = brainState.prebuiltOverlay || buildBrainOverlay();
-      document.body.appendChild(overlay);
-      brainState.overlay = overlay;
-      startBrainAnimation(brainState.canvas, {
-        paths: brainState.paths,
-        phases: brainState.phases,
-        speeds: brainState.speeds,
-        widths: brainState.widths
-      });
-      console.log('Marketing brain overlay forced on screen');
-    } catch (e) {
-      console.log('Could not show marketing brain overlay', e && e.message);
-    }
-  }
 
   /* -----------------------------------------------------------------------
-   *  OBSERVERS: watch for the gray circle (#pronunciation-loading-overlay)
+   *  SIMPLE OBSERVER: watch for the gray circle (#pronunciation-loading-overlay)
    * -------------------------------------------------------------------- */
-  function startAllMonitoring() {
-    // Build first overlay upfront
+
+  function startSimpleMonitoring() {
+    // Build overlay upfront
     buildBrainOverlay();
 
-    // Primary observer
+    // Simple observer that only watches for the loader
     var observer = new MutationObserver(function (mutations) {
       mutations.forEach(function (m) {
         m.addedNodes.forEach(function (node) {
@@ -547,95 +524,11 @@
         try { observer.observe(document.body, { childList: true, subtree: true }); } catch (e2) {}
       });
     }
-
-    // Console hooks: sometimes the overlay appears so briefly that we miss it
-    var originalConsoleLog = console.log;
-    console.log = function() {
-      originalConsoleLog.apply(console, arguments);
-
-      // Detect when pronunciation starts but we missed the gray circle
-      var message = Array.prototype.slice.call(arguments).join(' ');
-      if (message.includes('Starting pronunciation process') ||
-          message.includes('Loading animation displayed')) {
-
-        // Small delay to see if normal replacement worked
-        setTimeout(function() {
-          if (!brainState.overlay || !brainState.overlay.parentNode) {
-            console.log('No brain animation detected after pronunciation start - triggering marketing display');
-            showMarketingBrainAnimation();
-          }
-        }, 200);
-      }
-
-      // Detect when pronunciation process completes and hide brain animation
-      if (message.includes('Loading animation hidden') ||
-          message.includes('hideLoadingAnimation') ||
-          message.includes('pronunciation process complete') ||
-          message.includes('cleanup') ||
-          message.includes('forceCleanupAllResources') ||
-          message.includes('Execution flag reset')) {
-
-        // Delay slightly to ensure the pronunciation script cleanup is complete
-        setTimeout(function() {
-          if (brainState.overlay && brainState.overlay.parentNode) {
-            console.log('SpeakSmart: Detected pronunciation completion, removing brain animation');
-            cleanup();
-          }
-        }, 100);
-      }
-    };
   }
-
-  /* -----------------------------------------------------------------------
-   *  BACKUP MONITORING STRATEGY: Continuously watch for brief appearances
-   * -------------------------------------------------------------------- */
-  var monitoringInterval = null;
-  
-  function startBackupMonitoring() {
-    if (monitoringInterval) return;
-    
-    console.log('Starting backup monitoring for missed gray circles');
-    
-    monitoringInterval = setInterval(function() {
-      try {
-        var el = document.getElementById('pronunciation-loading-overlay');
-        if (el) instantReplacement(el);
-      } catch (e) {}
-    }, 350);
-  }
-
-  function stopBackupMonitoring() {
-    if (monitoringInterval) {
-      clearInterval(monitoringInterval);
-      monitoringInterval = null;
-      console.log('Stopped backup monitoring');
-    }
-  }
-
-  // Secondary observer on document.documentElement for broader coverage
-  var secondaryObserver = new MutationObserver(function (mutations) {
-    mutations.forEach(function (m) {
-      m.addedNodes.forEach(function (node) {
-        if (node.nodeType !== 1) return;
-        
-        // Look for the target element in the added subtree
-        if (node.id === 'pronunciation-loading-overlay') {
-          instantReplacement(node);
-        } else if (node.querySelector) {
-          var grayCircle = node.querySelector('#pronunciation-loading-overlay:not(.speaksmart-brain-overlay)');
-          if (grayCircle) {
-            instantReplacement(grayCircle);
-          }
-        }
-      });
-    });
-  });
 
   function cleanup() {
     console.log('Cleaning up brain animation');
-    
-    stopBackupMonitoring();
-    
+
     if (brainState.animationId) {
       cancelAnimationFrame(brainState.animationId);
       brainState.animationId = null;
@@ -647,16 +540,14 @@
     brainState.canvas = null;
   }
 
-  // Kick everything off (DOMContentLoaded guards included)
+  // Export cleanup function for external use
+  window.SpeakSmartCleanup = cleanup;
+
+  // Kick everything off
   function startSystem() {
     try {
-      startAllMonitoring();
-      startBackupMonitoring();
-      
-      // Pre-build first overlay
-      buildBrainOverlay();
-      
-      console.log('Multi-layer monitoring system active');
+      startSimpleMonitoring();
+      console.log('Simple loader hijacker active');
     } catch (e) {
       console.log('Bootstrap error', e && e.message);
     }
@@ -668,6 +559,6 @@
     startSystem();
   }
 
-  // Initialize the robust system
-  console.log('SpeakSmart race-condition-proof bootstrap with marketing safety net ready');
+  // Initialize the simple loader hijacker
+  console.log('SpeakSmart simple loader hijacker ready');
 })();
