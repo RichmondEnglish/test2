@@ -17,7 +17,9 @@
     lastFlash: -Infinity,
     flickIdx: null,
     isReplacing: false,
-    prebuiltOverlay: null  // Pre-built overlay ready for instant swap
+    prebuiltOverlay: null,  // Pre-built overlay ready for instant swap
+    clickCount: 0,  // Track number of clicks to trigger on second click
+    lastScriptLoad: null  // Track which script was last loaded
   };
 
   /* -----------------------------------------------------------------------
@@ -373,12 +375,16 @@
 
     var brainOverlay = document.createElement('div');
     brainOverlay.className = 'speaksmart-brain-overlay';
-    // Styles are set directly for this self-contained component
-    brainOverlay.style.position = 'relative'; // Changed to relative for centering in the body
-    brainOverlay.style.width = '480px';
-    brainOverlay.style.height = '360px';
+    // Styles for perfect centering on mobile and desktop
+    brainOverlay.style.position = 'fixed';
+    brainOverlay.style.top = '50%';
+    brainOverlay.style.left = '50%';
+    brainOverlay.style.transform = 'translate(-50%, -50%)';
+    brainOverlay.style.width = 'min(480px, 90vw)'; // Responsive width
+    brainOverlay.style.height = 'min(360px, 85vh)'; // Responsive height
     brainOverlay.style.background = 'transparent';
     brainOverlay.style.pointerEvents = 'none';
+    brainOverlay.style.zIndex = '9999'; // Ensure it's on top
 
     var loaderDiv = document.createElement('div');
     loaderDiv.style.position = 'relative';
@@ -389,8 +395,10 @@
     var img = document.createElement('img');
     img.src = assetPreloadState.BASE + assetPreloadState.LOADER_IMAGE;
     img.style.width = '100%';
+    img.style.height = 'auto';
     img.style.display = 'block';
     img.style.borderRadius = '1rem'; // Soften the edges of the placeholder
+    img.style.maxWidth = '100%'; // Ensure it doesn't overflow
     img.onerror = function() {
       console.log('Brain loader background image not found at Heroku, falling back to local file');
       try { img.src = 'SpeakSmart-loader.png'; } catch(e) {}
@@ -403,8 +411,8 @@
     canvas.height = 215;
     canvas.style.position = 'absolute';
     canvas.style.left = '50%';
-    canvas.style.top = '125px';
-    canvas.style.transform = 'translateX(-50%)'; // Simplified positioning
+    canvas.style.top = '35%'; // Responsive top positioning
+    canvas.style.transform = 'translate(-50%, -50%)'; // Center the canvas
     canvas.style.width = '200px';
     canvas.style.height = '215px';
     canvas.style.background = 'transparent';
@@ -483,18 +491,62 @@
   /* -----------------------------------------------------------------------
    *  PROACTIVE MARKETING TRIGGER: Show animation when pronunciation starts
    * -------------------------------------------------------------------- */
-  function showMarketingBrainAnimation() {
-    // Only if we don't already have a brain overlay active
-    if (brainState.overlay && brainState.overlay.parentNode) {
-      console.log('Brain animation already active, skipping marketing trigger');
+  function loadScriptForClick() {
+    var scriptUrl;
+    brainState.clickCount++;
+
+    if (brainState.clickCount === 1) {
+      // First click - load pronunciation checker script
+      scriptUrl = 'pronunciation-checker.js';
+      console.log('First click detected - loading pronunciation checker script');
+    } else if (brainState.clickCount === 2) {
+      // Second click - load grammar script
+      scriptUrl = 'speaksmart-grammar-gpt.js';
+      console.log('Second click detected - loading grammar script');
+    } else {
+      // Third click or more - load reading script
+      scriptUrl = 'speaksmart-reading-gpt.js';
+      console.log('Third+ click detected - loading reading script');
+    }
+
+    // Avoid loading the same script multiple times
+    if (brainState.lastScriptLoad === scriptUrl) {
+      console.log('Script already loaded, skipping:', scriptUrl);
       return;
     }
 
-    console.log('Proactive marketing brain animation triggered');
-    
+    // Load the script dynamically
+    var script = document.createElement('script');
+    script.src = scriptUrl;
+    script.onload = function() {
+      console.log('Script loaded successfully:', scriptUrl);
+      brainState.lastScriptLoad = scriptUrl;
+    };
+    script.onerror = function() {
+      console.error('Failed to load script:', scriptUrl);
+    };
+
+    document.head.appendChild(script);
+  }
+
+  function showBrainAnimationOnSecondClick() {
+    // Only trigger on second click
+    if (brainState.clickCount !== 2) {
+      console.log('Not second click, current count:', brainState.clickCount);
+      return;
+    }
+
+    // Only if we don't already have a brain overlay active
+    if (brainState.overlay && brainState.overlay.parentNode) {
+      console.log('Brain animation already active, skipping trigger');
+      return;
+    }
+
+    console.log('Second click brain animation triggered');
+
     var brainOverlay = buildBrainOverlay();
     document.body.appendChild(brainOverlay);
-    
+
     brainState.overlay = brainOverlay;
     // Pass animation data to avoid race condition
     startBrainAnimation(brainState.canvas, {
@@ -503,26 +555,45 @@
       speeds: brainState.speeds,
       widths: brainState.widths
     });
-    
-    // Marketing display duration - keep it visible for impact
-    setTimeout(function() {
-      console.log('Marketing brain animation auto-cleanup after display duration');
-      if (brainState.overlay === brainOverlay && brainState.overlay.parentNode) {
-        cleanup();
-      }
-    }, 1800); // 1.8 seconds for marketing impact
+
+    console.log('Brain animation displayed for second click');
   }
+
+  // Global click tracker for second-click behavior
+  function handleGlobalClick(event) {
+    // Only count clicks on interactive elements (buttons, links, etc.)
+    var target = event.target;
+    if (target.tagName === 'BUTTON' || target.tagName === 'A' ||
+        target.closest('button') || target.closest('a') ||
+        target.onclick || target.getAttribute('role') === 'button') {
+
+      console.log('Interactive element clicked, click count:', brainState.clickCount + 1);
+
+      // Load script for this click
+      loadScriptForClick();
+
+      // Show brain animation only on second click
+      if (brainState.clickCount === 2) {
+        setTimeout(function() {
+          showBrainAnimationOnSecondClick();
+        }, 100); // Small delay to ensure script has started loading
+      }
+    }
+  }
+
+  // Add global click listener
+  document.addEventListener('click', handleGlobalClick, true);
 
   // Watch for pronunciation process starting (trigger for fast-loading scenarios)
   var originalConsoleLog = console.log;
   console.log = function() {
     originalConsoleLog.apply(console, arguments);
-    
+
     // Detect when pronunciation starts but we missed the gray circle
     var message = Array.prototype.slice.call(arguments).join(' ');
-    if (message.includes('Starting pronunciation process') || 
+    if (message.includes('Starting pronunciation process') ||
         message.includes('Loading animation displayed')) {
-      
+
       // Small delay to see if normal replacement worked
       setTimeout(function() {
         if (!brainState.overlay || !brainState.overlay.parentNode) {
@@ -654,6 +725,10 @@
             cancelAnimationFrame(brainState.animationId);
             brainState.animationId = null;
           }
+          // Reset click count so the sequence can restart
+          brainState.clickCount = 0;
+          brainState.lastScriptLoad = null;
+          console.log('Click count reset for next sequence');
         }
       });
     });
@@ -661,13 +736,13 @@
 
   function cleanup() {
     console.log('Cleaning up brain animation');
-    
+
     stopBackupMonitoring();
-    
+
     if (brainState.animationId) {
       cancelAnimationFrame(brainState.animationId);
     }
-    
+
     if (brainState.overlay && brainState.overlay.parentNode) {
       brainState.overlay.parentNode.removeChild(brainState.overlay);
     }
@@ -683,12 +758,15 @@
     brainState.lastFlash = -Infinity;
     brainState.flickIdx = null;
     brainState.isReplacing = false;
-    
+    // Reset click count for next sequence
+    brainState.clickCount = 0;
+    brainState.lastScriptLoad = null;
+
     // Rebuild overlay for next attempt
     setTimeout(function() {
       buildBrainOverlay();
     }, 200);
-    
+
     console.log('Cleanup complete - ready for next attempt');
   }
 
