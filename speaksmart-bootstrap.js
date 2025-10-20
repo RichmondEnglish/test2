@@ -497,15 +497,15 @@
 
     if (brainState.clickCount === 1) {
       // First click - load pronunciation checker script
-      scriptUrl = 'pronunciation-checker.js';
+      scriptUrl = assetPreloadState.HOST + '/pronunciation-checker.js';
       console.log('First click detected - loading pronunciation checker script');
     } else if (brainState.clickCount === 2) {
       // Second click - load grammar script
-      scriptUrl = 'speaksmart-grammar-gpt.js';
+      scriptUrl = assetPreloadState.HOST + '/speaksmart-grammar-gpt.js';
       console.log('Second click detected - loading grammar script');
     } else {
       // Third click or more - load reading script
-      scriptUrl = 'speaksmart-reading-gpt.js';
+      scriptUrl = assetPreloadState.HOST + '/speaksmart-reading-gpt.js';
       console.log('Third+ click detected - loading reading script');
     }
 
