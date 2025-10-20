@@ -77,6 +77,12 @@
     img.decoding = 'async';
     img.loading = 'eager';
     img.fetchPriority = 'high';
+    img.onload = function() {
+      console.log('SpeakSmart: image warmed successfully:', href);
+    };
+    img.onerror = function() {
+      console.log('SpeakSmart: failed to warm image:', href);
+    };
     img.src = href;
     assetPreloadState.imgRefs.push(img); // keep ref to avoid GC
   }
@@ -275,6 +281,7 @@
   }
 
   function setupBrainPaths() {
+    console.log('SpeakSmart: Setting up brain animation paths');
     var W = 200;
     var H = 230;
     var sizeFactor = 0.65;
@@ -347,6 +354,8 @@
     brainState.phases = brainState.paths.map(function() { return rand(0, Math.PI * 2); });
     brainState.speeds = brainState.paths.map(function() { return rand(2.5, 5.0); });
     brainState.widths = brainState.paths.map(function() { return rand(8, 11); });
+
+    console.log('SpeakSmart: Brain paths setup complete -', brainState.paths.length, 'neuron paths ready');
   }
 
   function startBrainAnimation(canvas, pathsData) {
@@ -361,6 +370,8 @@
       var localWidths = pathsData.widths.slice();
       var lastFlash = -Infinity;
       var flickIdx = null;
+
+      console.log('SpeakSmart: Brain animation starting with', localPaths.length, 'neuron paths');
 
       function tick(now) {
         brainState.animationId = requestAnimationFrame(tick);
@@ -476,6 +487,9 @@
     // Store references for instant activation
     brainState.prebuiltOverlay = brainOverlay;
     brainState.canvas = canvas;
+
+    // Set up brain paths for animation
+    setupBrainPaths();
 
     return brainOverlay;
   }
