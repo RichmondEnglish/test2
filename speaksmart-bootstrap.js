@@ -10,9 +10,9 @@
     scripts: [
       'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/simple-pron-checker-notext.js',
       'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/simple-pron-checker.js',
-      'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/pronunciation-checker.js'
-      'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/speaksmart-pron-azure.js'
-      'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/speaksmart-reading-gpt.js'
+      'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/pronunciation-checker.js',
+      'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/speaksmart-pron-azure.js',
+      'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/speaksmart-reading-gpt.js',
       'https://richmond-english-wheel-32e9771e3e5a.herokuapp.com/speaksmart-grammar-gpt.js'
     ],
     images: [
