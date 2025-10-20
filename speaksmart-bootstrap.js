@@ -73,7 +73,7 @@
 
   function ssWarmImage(href) {
     var img = new Image();
-    // img.crossOrigin = 'anonymous'; // uncomment if you draw to <canvas>
+    img.crossOrigin = 'anonymous'; // Match preload credentials mode
     img.decoding = 'async';
     img.loading = 'eager';
     img.fetchPriority = 'high';
